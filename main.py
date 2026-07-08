@@ -19,11 +19,11 @@ import httpx
 import logging
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("RVG-Gateway")
+logger = logging.getLogger("KIA")
 
 IRAN_TZ = ZoneInfo("Asia/Tehran")
 
-app = FastAPI(title="RVG Gateway - codebox", docs_url=None, redoc_url=None)
+app = FastAPI(title="KIA", docs_url=None, redoc_url=None)
 
 CONFIG = {
     "port": int(os.environ.get("PORT", 8000)),
@@ -159,7 +159,7 @@ async def startup():
     )
     await load_state()
     log_activity("system", "سرور راه‌اندازی شد", "ok")
-    logger.info(f"RVG Gateway v9.1 started on port {CONFIG['port']}")
+    logger.info(f"KIA v9.1 started on port {CONFIG['port']}")
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -178,7 +178,7 @@ def generate_uuid() -> str:
 def now_ir() -> datetime:
     return datetime.now(IRAN_TZ)
 
-def generate_vless_link(uuid: str, host: str, remark: str = "RVG", protocol: str = DEFAULT_PROTOCOL) -> str:
+def generate_vless_link(uuid: str, host: str, remark: str = "KIA", protocol: str = DEFAULT_PROTOCOL) -> str:
     """می‌سازد VLESS share-link متناسب با پروتکل انتخاب‌شده (WS کلاسیک یا یکی از مدهای XHTTP)."""
     if protocol == "vless-ws":
         path = f"/ws/{uuid}"
@@ -289,7 +289,7 @@ async def ensure_default_link():
 # ── Basic endpoints ───────────────────────────────────────────────────────────
 @app.get("/")
 async def root():
-    return {"service": "RVG Gateway", "version": "9.1", "status": "active", "channel": "https://t.me/CodeBoxo"}
+    return {"service": "KIA", "version": "9.1", "status": "active", "channel": "https://t.me/CodeBoxo"}
 
 @app.get("/health")
 async def health():
@@ -305,7 +305,7 @@ async def subscription_single(uuid: str):
         raise HTTPException(status_code=404, detail="not found or inactive")
     host = get_host()
     proto = link.get("protocol", DEFAULT_PROTOCOL)
-    vless = generate_vless_link(uuid, host, remark=f"RVG-{link['label']}", protocol=proto)
+    vless = generate_vless_link(uuid, host, remark=f"KIA-{link['label']}", protocol=proto)
     content = base64.b64encode(vless.encode()).decode()
     return Response(content=content, media_type="text/plain",
                     headers={"profile-title": quote(link["label"]), "support-url": "https://t.me/CodeBoxo"})
@@ -316,7 +316,7 @@ async def subscription_all(_=Depends(require_auth)):
     host = get_host()
     async with LINKS_LOCK:
         lines = [
-            generate_vless_link(uid, host, remark=f"RVG-{d['label']}", protocol=d.get("protocol", DEFAULT_PROTOCOL))
+            generate_vless_link(uid, host, remark=f"KIA-{d['label']}", protocol=d.get("protocol", DEFAULT_PROTOCOL))
             for uid, d in LINKS.items()
             if is_link_allowed(d)
         ]
@@ -458,7 +458,7 @@ async def sub_group_subscription(uuid_key: str, request: Request):
         for lid in link_ids:
             link = LINKS.get(lid)
             if link and is_link_allowed(link):
-                lines.append(generate_vless_link(lid, host, remark=f"RVG-{link['label']}", protocol=link.get("protocol", DEFAULT_PROTOCOL)))
+                lines.append(generate_vless_link(lid, host, remark=f"KIA-{link['label']}", protocol=link.get("protocol", DEFAULT_PROTOCOL)))
 
     content = base64.b64encode("\n".join(lines).encode()).decode()
     return Response(
@@ -644,7 +644,7 @@ async def create_link(request: Request, _=Depends(require_auth)):
         "uuid": uid,
         **LINKS[uid],
         "expired": False,
-        "vless_link": generate_vless_link(uid, host, remark=f"RVG-{label}", protocol=protocol),
+        "vless_link": generate_vless_link(uid, host, remark=f"KIA-{label}", protocol=protocol),
         "sub_url": f"https://{host}/sub/{uid}",
     }
 
@@ -661,7 +661,7 @@ async def list_links(_=Depends(require_auth)):
             **d,
             "protocol": proto,
             "expired": is_link_expired(d),
-            "vless_link": generate_vless_link(uid, host, remark=f"RVG-{d['label']}", protocol=proto),
+            "vless_link": generate_vless_link(uid, host, remark=f"KIA-{d['label']}", protocol=proto),
             "sub_url": f"https://{host}/sub/{uid}",
         })
     result.sort(key=lambda x: x["created_at"], reverse=True)
@@ -823,7 +823,7 @@ async def public_sub_data(uuid_key: str, request: Request):
             "limit_bytes": link.get("limit_bytes", 0),
             "limit_fmt": "∞" if link.get("limit_bytes", 0) == 0 else fmt_bytes(link["limit_bytes"]),
             "expires_at": link.get("expires_at"),
-            "vless_link": generate_vless_link(lid, host, remark=f"RVG-{link['label']}", protocol=proto),
+            "vless_link": generate_vless_link(lid, host, remark=f"KIA-{link['label']}", protocol=proto),
             "sub_url": f"https://{host}/sub/{lid}",
             "connections": conn_count,
         })
