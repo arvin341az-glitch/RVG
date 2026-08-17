@@ -12,9 +12,9 @@ from fastapi import APIRouter, Request, HTTPException
 from starlette.requests import ClientDisconnect
 
 from main import stats, connections, error_logs, logger
-from protocol.vless.vless import check_and_use
 from protocol.trojan.xhttp_core import (
     TROJAN_PACKET_UP_HIGH_WATER,
+    _TrojanQuotaGate,
     ensure_reaper,
     _get_or_create_session,
     _open_tcp_for_session,
@@ -42,7 +42,13 @@ async def trojan_packet_up_upload(uuid: str, session_id: str, seq: int, request:
     if not body:
         return {"ok": True}
 
-    if not await check_and_use(uuid, len(body)):
+    # به همون دلیلی که در نسخه‌ی VLESS توضیح داده شده: batch کردن کوتا به‌جای
+    # await روی هر پکت کوچیک، تا قفل سراسری هر پکت رو گلوگاه نکنه.
+    gate = sess.get("gate")
+    if gate is None:
+        gate = _TrojanQuotaGate(uuid)
+        sess["gate"] = gate
+    if not await gate.add(len(body)):
         await _teardown(session_id, reason="quota/disabled/unknown")
         raise HTTPException(status_code=403, detail="quota/disabled/unknown")
 

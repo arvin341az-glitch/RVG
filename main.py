@@ -32,6 +32,7 @@ import hashlib
 import secrets
 import sys
 import time
+import traceback
 import central
 import aiofiles
 from datetime import datetime, timedelta
@@ -40,11 +41,13 @@ from urllib.parse import quote
 from collections import deque, defaultdict
 from pathlib import Path
 import bottokentcpproxy
-from protocol.mtproto import mtproto
+from protocol.mtproto import mtproto_native as mtproto
 from typing import Optional
 import base64
 import botgeneratedomin
-
+import bottokentcpproxy
+import zeussocks5
+from protocol.mtproto import mtproto_native as mtproto
 from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import Response, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -105,7 +108,19 @@ CONFIG = {
     "port": int(os.environ.get("PORT", 8000)),
     "secret": _get_or_create_secret(),
     "host": os.environ.get("RAILWAY_PUBLIC_DOMAIN", "localhost"),
+    "disable_logging": False,
 }
+
+
+def apply_logging_state():
+    """logging.disable سطح‌بندی سراسریه (روی کل ماژول logging اثر می‌ذاره)، پس
+    یک‌جا همه‌ی logger های پروژه (RVG-Gateway، uvicorn.access، uvicorn.error،
+    mtproto و ...) رو خاموش/روشن می‌کنه. چک داخلیش خیلی ارزونه، پس این خودش
+    باعث می‌شه سربار I/O و فرمت‌کردن استرینگ لاگ‌ها کاملاً حذف بشه."""
+    if CONFIG.get("disable_logging"):
+        logging.disable(logging.CRITICAL)
+    else:
+        logging.disable(logging.NOTSET)
 
 
 async def load_state():
@@ -123,6 +138,8 @@ async def load_state():
                 NODES[nid] = _normalize_node(n)
             if "password_hash" in data:
                 AUTH["password_hash"] = data["password_hash"]
+            CONFIG["disable_logging"] = bool(data.get("disable_logging", False))
+            apply_logging_state()
             logger.info(
                 f"State loaded: {len(LINKS)} links, {len(SUBS)} subs, "
                 f"{len(NODES)} nodes, {len(NODE_KEYS)} node keys"
@@ -140,6 +157,7 @@ async def save_state():
                 "node_keys": dict(NODE_KEYS),
                 "nodes": dict(NODES),
                 "password_hash": AUTH["password_hash"],
+                "disable_logging": CONFIG.get("disable_logging", False),
                 "saved_at": datetime.now().isoformat(),
             }
             tmp = DATA_FILE.with_suffix(".tmp")
@@ -187,7 +205,18 @@ stats = {
     "total_errors": 0,
     "start_time": time.time(),
 }
-error_logs: deque = deque(maxlen=50)
+class _ErrorLogDeque(deque):
+    """deque معمولی، با این تفاوت که وقتی توقف لاگ‌گیری فعال باشه append() هیچ کاری
+    نمی‌کنه. با این روش همه‌ی error_logs.append(...) های پخش‌شده توی پروژه
+    (websocket.py ها، xhttp_core.py ها و ...) بدون نیاز به تغییر خودشون از این
+    فلگ پیروی می‌کنن."""
+    def append(self, item):
+        if CONFIG.get("disable_logging"):
+            return
+        super().append(item)
+
+
+error_logs: deque = _ErrorLogDeque(maxlen=50)
 activity_logs: deque = deque(maxlen=200)
 hourly_traffic: dict = defaultdict(int)
 http_client: httpx.AsyncClient | None = None
@@ -195,6 +224,9 @@ LINKS: dict = {}
 LINKS_LOCK = asyncio.Lock()
 SUBS: dict = {}
 SUBS_LOCK = asyncio.Lock()
+
+# ── MTProto (mtproto_native / باینری رسمی تلگرام) — هر لینک = یک پروسه‌ی جدا،
+# روی پورت خودش، با ad_tag مستقل خودش (per-instance، دقیقاً مثل mtg قدیم) ──
 
 # ── Node linking (اتصال چند پنل به هم) ────────────────────────────────────────
 # NODE_KEYS: کلیدهایی که *این* پنل صادر کرده. هر کلید به یک پنل دیگه اجازه میده
@@ -283,11 +315,20 @@ async def startup():
     logger.info(f"RVG Gateway v9.2 started on port {CONFIG['port']}")
 
 async def _restart_mtproto_instances():
+    """بعد از بالا اومدن پنل، به‌ازای هر لینک MTProto فعال یک پروسه‌ی جدای
+    mtproto_native (باینری رسمی تلگرام) روی پورت خودش بالا می‌آره."""
     async with LINKS_LOCK:
         targets = [
             (uid, d) for uid, d in LINKS.items()
             if d.get("protocol") == "mtproto" and d.get("active", True)
         ]
+    if targets and not bottokentcpproxy.has_saved_token():
+        logger.error(
+            f"⚠️ {len(targets)} لینک MTProto وجود دارد ولی توکن Railway ذخیره نشده — "
+            f"هیچ TCP Proxy عمومی ساخته/بازسازی نمی‌شود و این لینک‌ها از بیرون کار نمی‌کنند. "
+            f"(اگر قبلاً توکن را وارد کرده بودید، یعنی دایرکتوری DATA_DIR بین دیپلوی‌ها "
+            f"پاک می‌شود و باید یک Volume پایدار روی Railway بهش وصل کنید.)"
+        )
     for uid, d in targets:
         try:
             inst = await mtproto.start_instance(
@@ -298,18 +339,28 @@ async def _restart_mtproto_instances():
                 force_port=d.get("mtproto_manual_port", False),
                 ad_tag=d.get("ad_tag"),
             )
-            old_port = d.get("mtproto_port")
-            async with LINKS_LOCK:
+        except Exception as exc:
+            logger.error(f"MTProto[{uid[:8]}]: راه‌اندازی ناموفق بود: {exc}\n{traceback.format_exc()}")
+            continue
+
+        old_port = d.get("mtproto_port")
+        async with LINKS_LOCK:
+            if uid in LINKS:
                 LINKS[uid]["mtproto_port"] = inst["port"]
                 LINKS[uid]["mtproto_secret"] = inst["secret"]
 
-            if (d.get("mtproto_proxy_id") and inst["port"] != old_port
-                    and not d.get("mtproto_manual_port", False)):
-                asyncio.create_task(_reattach_mtproto_public_proxy(
-                    uid, inst["port"], d.get("mtproto_proxy_id"), d.get("label", "")
-                ))
-        except Exception as exc:
-            logger.error(f"ری‌استارت خودکار MTProto ناموفق برای {uid[:8]}: {exc}")
+        if (d.get("mtproto_proxy_id") and inst["port"] != old_port
+                and not d.get("mtproto_manual_port", False)):
+            asyncio.create_task(_reattach_mtproto_public_proxy(
+                uid, inst["port"], d.get("mtproto_proxy_id"), d.get("label", "")
+            ))
+        elif not d.get("mtproto_proxy_id") and bottokentcpproxy.has_saved_token():
+            # لینکی که هنوز هیچ TCP Proxy عمومی نداره (مثلاً چون با نسخه‌ی قدیمی
+            # ساخته شده) — بدون این، لینکش مرده می‌مونه.
+            asyncio.create_task(_attach_mtproto_public_proxy(
+                uid, inst["port"], d.get("label", "")
+            ))
+
 
 async def _mtproto_usage_callback(uuid: str, n_bytes: int) -> bool:
     async with LINKS_LOCK:
@@ -325,14 +376,14 @@ async def _mtproto_usage_callback(uuid: str, n_bytes: int) -> bool:
 
 mtproto.set_usage_callback(_mtproto_usage_callback)
 
+
 async def _attach_mtproto_public_proxy(uid: str, application_port: int, label: str):
+    """TCP Proxy عمومی روی Railway برای پورت این instance خاص می‌سازه (هر لینک
+    پورت جدای خودش رو داره، پس هرکدوم TCP Proxy جدای خودش رو لازم داره)."""
     try:
         pub = await bottokentcpproxy.create_public_proxy_for_port(application_port)
     except Exception as exc:
         logger.warning(f"TCP Proxy عمومی برای {uid[:8]} ناموفق بود: {exc}")
-        async with LINKS_LOCK:
-            if uid in LINKS:
-                LINKS[uid]["mtproto_public_pending"] = False
         log_activity("link", f"ساخت TCP Proxy عمومی برای «{label}» ناموفق بود: {exc}", "err")
         return
     async with LINKS_LOCK:
@@ -344,35 +395,35 @@ async def _attach_mtproto_public_proxy(uid: str, application_port: int, label: s
     asyncio.create_task(save_state())
     log_activity("link", f"TCP Proxy عمومی «{label}» آماده شد ({pub['domain']}:{pub['port']})", "ok")
 
+
 async def _reattach_mtproto_public_proxy(uid: str, new_port: int, old_proxy_id: Optional[str], label: str):
     if old_proxy_id:
         await bottokentcpproxy.delete_public_proxy(old_proxy_id)
     await _attach_mtproto_public_proxy(uid, new_port, label)
 
-# ===== تابع جدید برای به‌روزرسانی ad_tag روی پروکسی =====
+
 async def _update_mtproto_ad_tag(uuid: str, ad_tag: str):
+    """پروسه‌ی این کاربر رو stop/start می‌کنه تا ad_tag جدید (که -P هست، سطح
+    process، نه runtime-API) اعمال بشه. force_port=True چون تازه stop شده و
+    پورت قدیمی باید آزاد باشه؛ اگه بازم آزاد نشد، پورت جدید می‌گیره و TCP Proxy
+    عمومی رو دوباره به پورت جدید وصل می‌کنیم."""
     try:
-        # اسنپ‌شات اولیه‌ی لینک قبل از هر کاری - برای مقایسه‌ی پورت قدیم/جدید لازم است
         async with LINKS_LOCK:
             link = LINKS.get(uuid)
             if not link:
                 return
-            old_port = link.get("mtproto_port")
-            old_proxy_id = link.get("mtproto_proxy_id")
-            manual_port = link.get("mtproto_manual_port", False)
             label = link.get("label", "")
             secret = link.get("mtproto_secret")
             domain = link.get("mtproto_domain", mtproto.DEFAULT_FAKE_TLS_DOMAIN)
+            old_port = link.get("mtproto_port")
+            old_proxy_id = link.get("mtproto_proxy_id")
+            manual_port = link.get("mtproto_manual_port", False)
+            if not secret:
+                logger.error(f"MTProto[{uuid[:8]}]: سکرت پیدا نشد")
+                return
 
         await mtproto.stop_instance(uuid)
-
         try:
-            # force_port=True همیشه: چون تازه instance رو stop کردیم، پورت قدیمی
-            # قطعاً باید آزاد باشه. اگر force_port=False بذاریم و پورت به هر دلیلی
-            # (مثلاً TIME_WAIT) هنوز آزاد نشده بود، mtg یک پورت داخلی جدید و تصادفی
-            # انتخاب می‌کند و TCP Proxy عمومی روی Railway (که آدرسش را کاربر در
-            # @MTProxybot ثبت کرده) دیگر به mtg جدید اشاره نمی‌کند — دقیقاً همین
-            # چیزی بود که باعث می‌شد تبلیغ (ad_tag) کار نکند.
             inst = await mtproto.start_instance(
                 uuid,
                 secret=secret,
@@ -382,11 +433,7 @@ async def _update_mtproto_ad_tag(uuid: str, ad_tag: str):
                 ad_tag=ad_tag,
             )
         except RuntimeError as exc:
-
-            logger.warning(
-                f"MTProto[{uuid[:8]}]: گرفتن دوباره‌ی پورت قبلی {old_port} برای "
-                f"ad_tag ناموفق بود ({exc})، تلاش با پورت جدید..."
-            )
+            logger.warning(f"ad_tag ناموفق بود ({exc})، تلاش با پورت جدید...")
             inst = await mtproto.start_instance(
                 uuid,
                 secret=secret,
@@ -399,7 +446,6 @@ async def _update_mtproto_ad_tag(uuid: str, ad_tag: str):
         async with LINKS_LOCK:
             link = LINKS.get(uuid)
             if not link:
-                # لینک در حین ری‌استارت حذف شده؛ instance تازه‌ساز را متوقف کن
                 asyncio.create_task(mtproto.stop_instance(uuid))
                 return
             link["mtproto_port"] = inst["port"]
@@ -411,7 +457,7 @@ async def _update_mtproto_ad_tag(uuid: str, ad_tag: str):
                 uuid, get_host(), remark=f"RVG-{link.get('label','')}", protocol="mtproto"
             )
 
-        if old_proxy_id and inst["port"] != old_port and not manual_port:
+        if inst["port"] != old_port and old_proxy_id and not manual_port:
             asyncio.create_task(_reattach_mtproto_public_proxy(
                 uuid, inst["port"], old_proxy_id, label
             ))
@@ -419,7 +465,7 @@ async def _update_mtproto_ad_tag(uuid: str, ad_tag: str):
         asyncio.create_task(save_state())
         logger.info(
             f"MTProto[{uuid[:8]}]: ad_tag به‌روز شد، instance ری‌استارت شد "
-            f"(port={inst['port']}, تغییر پورت={inst['port'] != old_port})"
+            f"(پورت: {old_port} -> {inst['port']})"
         )
         log_activity("link", f"تبلیغ کانال برای «{label}» با موفقیت اعمال شد", "ok")
 
@@ -427,7 +473,6 @@ async def _update_mtproto_ad_tag(uuid: str, ad_tag: str):
         logger.error(f"خطا در به‌روزرسانی ad_tag برای {uuid[:8]}: {exc}")
         async with LINKS_LOCK:
             if uuid in LINKS:
-                LINKS[uuid]["active"] = False
                 LINKS[uuid]["ad_tag_status"] = "error"
         log_activity("link", f"به‌روزرسانی ad_tag برای «{LINKS.get(uuid,{}).get('label','')}» ناموفق بود", "err")
         asyncio.create_task(save_state())
@@ -457,15 +502,21 @@ def generate_share_link(uuid: str, host: str, remark: str = "RVG", protocol: str
     fp = link.get("fingerprint", "chrome")
 
     if protocol == "mtproto":
-        port = link.get("mtproto_port")
         secret = link.get("mtproto_secret")
-        if not port or not secret:
+        if not secret:
             return f"tg://proxy?server={host}&port=0&secret=not_ready#{quote(remark)}"
+        # مهم: برای MTProto هیچ‌وقت به دامنه‌ی پنل fallback نمی‌کنیم. دامنه‌ی اصلی
+        # Railway فقط HTTP/443 رو سرو می‌کنه و پورت داخلی (مثلاً 8477) از بیرون
+        # اصلاً باز نیست — چنین لینکی کاملاً مرده‌ست (نه پینگ می‌ده نه وصل می‌شه).
+        # تنها آدرس معتبر، دامنه/پورتی هست که Railway موقع ساخت TCP Proxy می‌ده.
         pub_host = link.get("mtproto_public_host")
         pub_port = link.get("mtproto_public_port")
-        final_host = pub_host or host
-        final_port = pub_port or port
-        return mtproto.generate_mtproto_link(final_host, final_port, secret)
+        if not pub_host or not pub_port:
+            return f"tg://proxy?server={host}&port=0&secret=not_ready#{quote(remark)}"
+        return mtproto.generate_mtproto_link(
+            pub_host, pub_port, secret,
+            mtproto.sanitize_domain(link.get("mtproto_domain"))
+        )
 
     if protocol == "shadowsocks":
         cipher = link.get("ss_cipher", DEFAULT_CIPHER)
@@ -1076,7 +1127,7 @@ async def backup_import(request: Request, _=Depends(require_auth)):
     if not isinstance(new_links, dict) or not isinstance(new_subs, dict):
         raise HTTPException(status_code=400, detail="ساختار فایل بکاپ نامعتبر است")
 
-    # همه‌ی instance های فعلی MTProto رو متوقف کن قبل از جایگزینی
+    # همه‌ی instance‌های MTProto رو قبل از جایگزینی داده‌ها متوقف کن
     try:
         await mtproto.stop_all()
     except Exception as exc:
@@ -1144,39 +1195,240 @@ async def get_stats(_=Depends(require_auth)):
         "subs_count": len(SUBS),
     }
 
+@app.get("/api/bot-tcp-proxy/domains")
+async def api_bot_tcp_proxy_domains(_=Depends(require_auth)):
+    return {"domains": bottokentcpproxy.get_known_domains()}
+
 @app.post("/api/bot-tcp-proxy/start")
 async def api_bot_tcp_proxy_start(request: Request, _=Depends(require_auth)):
     body = await request.json()
     token = str(body.get("token", "")).strip()
-    port = int(body.get("port") or CONFIG["port"])
-    mode = str(body.get("mode") or "blacklist")
-    target_domains = body.get("target_domains") or []
-    extra_blacklist_domains = body.get("extra_blacklist_domains") or []
+    # هر لینک MTProto پورت جدای خودش رو داره (per-instance)، پس پورت باید
+    # از ورودی کاربر/فرانت (لینکی که TCP Proxy براش ساخته می‌شه) بیاد.
+    uid = str(body.get("uuid") or "").strip()
+    port = body.get("port")
+    if port is None and uid:
+        async with LINKS_LOCK:
+            link = LINKS.get(uid)
+            port = link.get("mtproto_port") if link else None
+    if port is None:
+        raise HTTPException(status_code=400, detail="پورت (یا uuid لینک) مشخص نشده")
+    port = int(port)
+    reachable_domains = body.get("reachable_domains") or []
     try:
-        bottokentcpproxy.start_job(
-            token, port, mode=mode,
-            target_domains=target_domains,
-            extra_blacklist_domains=extra_blacklist_domains,
-        )
+        bottokentcpproxy.start_job(token, port, reachable_domains=reachable_domains)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    log_activity(
-        "system",
-        "ساخت TCP Proxy" + (" (جستجوی دامنه‌ی دلخواه)" if mode == "whitelist" else " (بلک‌لیست)") + " آغاز شد",
-        "info",
-    )
+    log_activity("system", "جست‌وجوی TCP Proxy آغاز شد", "info")
     return {"ok": True}
 
+@app.post("/api/mtproto/fix-proxy")
+async def api_mtproto_fix_proxy(request: Request, _=Depends(require_auth)):
+    """راه مستقیم برای درست‌کردن لینک‌های MTProto بدون TCP Proxy:
+    توکن Railway رو (اگه فرستاده بشه) ذخیره می‌کنه و بعد برای همه‌ی لینک‌های
+    MTProto که هنوز TCP Proxy عمومی ندارن، یکی می‌سازه — بدون نیاز به طی‌کردن
+    کل فرآیند جست‌وجوی دامنه."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    token = str(body.get("token", "")).strip()
+    if token:
+        bottokentcpproxy.save_token(token)
+
+    if not bottokentcpproxy.has_saved_token():
+        raise HTTPException(status_code=400, detail="توکن Railway ذخیره نشده — آن را در همین درخواست بفرستید")
+
+    async with LINKS_LOCK:
+        targets = [
+            (uid, d.get("mtproto_port"), d.get("label", ""))
+            for uid, d in LINKS.items()
+            if d.get("protocol") == "mtproto" and not d.get("mtproto_public_host")
+        ]
+
+    fixed, failed = [], []
+    for uid, port, label in targets:
+        if not port:
+            failed.append({"uuid": uid, "label": label, "error": "پورت داخلی ندارد (instance اجرا نشده)"})
+            continue
+        try:
+            pub = await bottokentcpproxy.create_public_proxy_for_port(int(port))
+        except Exception as exc:
+            failed.append({"uuid": uid, "label": label, "error": str(exc)})
+            continue
+        async with LINKS_LOCK:
+            if uid in LINKS:
+                LINKS[uid]["mtproto_public_host"] = pub["domain"]
+                LINKS[uid]["mtproto_public_port"] = pub["port"]
+                LINKS[uid]["mtproto_proxy_id"] = pub["id"]
+                LINKS[uid]["mtproto_public_pending"] = False
+        fixed.append({
+            "uuid": uid, "label": label,
+            "host": pub["domain"], "port": pub["port"],
+            "link": generate_share_link(uid, get_host(), remark=f"RVG-{label}", protocol="mtproto"),
+        })
+        log_activity("link", f"TCP Proxy عمومی «{label}» ساخته شد ({pub['domain']}:{pub['port']})", "ok")
+
+    asyncio.create_task(save_state())
+    return {"ok": True, "fixed": fixed, "failed": failed}
+
+
+@app.get("/api/mtproto/{uid}/stats")
+async def api_mtproto_stats(uid: str, _=Depends(require_auth)):
+    """آمار خام خود باینری mtproto-proxy برای این لینک.
+    اگه total_special_connections صفر بمونه حتی بعد از تلاش برای اتصال، یعنی
+    هیچ پکتی به پروسه نمی‌رسه (مشکل مسیر شبکه/TCP Proxy). اگه بالا بره ولی
+    اتصال برقرار نشه، یعنی پکت می‌رسه و مشکل در handshake/سکرت است."""
+    async with LINKS_LOCK:
+        if uid not in LINKS:
+            raise HTTPException(status_code=404, detail="link not found")
+    return await mtproto.get_stats(uid)
+
+
+@app.post("/api/zeus-proxy/create")
+async def api_zeus_proxy_create(request: Request, _=Depends(require_auth)):
+    """ساخت پروکسی Zeus با پشتیبانی از محدودیت حجم، انقضا و اتصال per IP."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    token = str(body.get("token", "")).strip()
+    # ── کانفیگ‌های اختیاری ──
+    traffic_limit_gb = body.get("traffic_limit_gb")
+    expires_days = body.get("expires_days")
+    max_connections_per_ip = body.get("max_connections_per_ip")
+    try:
+        result = await zeussocks5.create_zeus_proxy(
+            token or None,
+            traffic_limit_gb=float(traffic_limit_gb) if traffic_limit_gb is not None else None,
+            expires_days=int(expires_days) if expires_days is not None else None,
+            max_connections_per_ip=int(max_connections_per_ip) if max_connections_per_ip is not None else None,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"ساخت پروکسی Zeus ناموفق بود: {exc}")
+    log_activity("system", f"پروکسی Zeus ساخته شد ({result['domain']}:{result['public_port']})", "ok")
+    return {"ok": True, **result}
+
+@app.get("/api/zeus-proxy/status")
+async def api_zeus_proxy_status(_=Depends(require_auth)):
+    return zeussocks5.get_zeus_status()
+
+@app.post("/api/zeus-proxy/delete")
+async def api_zeus_proxy_delete(_=Depends(require_auth)):
+    await zeussocks5.delete_zeus_proxy()
+    log_activity("system", "پروکسی Zeus حذف شد", "warn")
+    return {"ok": True}
+
+@app.post("/api/zeus-proxy/config")
+async def api_zeus_proxy_config(request: Request, _=Depends(require_auth)):
+    """تغییر کانفیگ‌های پروکسی Zeus (حجم/انقضا/اتصال per IP) بدون ری‌استارت."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    traffic_limit_gb = body.get("traffic_limit_gb")
+    expires_days = body.get("expires_days")
+    max_connections_per_ip = body.get("max_connections_per_ip")
+    cfg = zeussocks5.update_zeus_config(
+        traffic_limit_gb=float(traffic_limit_gb) if traffic_limit_gb is not None else None,
+        expires_days=int(expires_days) if expires_days is not None else None,
+        max_connections_per_ip=int(max_connections_per_ip) if max_connections_per_ip is not None else None,
+    )
+    log_activity("system", f"کانفیگ پروکسی Zeus آپدیت شد", "ok")
+    return {"ok": True, "config": cfg}
 @app.post("/api/bot-tcp-proxy/stop")
 async def api_bot_tcp_proxy_stop(_=Depends(require_auth)):
     stopped = bottokentcpproxy.stop_job()
     if stopped:
-        log_activity("system", "ساخت TCP Proxy ربات متوقف شد", "warn")
+        log_activity("system", "جست‌وجوی TCP Proxy متوقف شد", "warn")
     return {"ok": True, "stopped": stopped}
 
 @app.get("/api/bot-tcp-proxy/status")
 async def api_bot_tcp_proxy_status(_=Depends(require_auth)):
     return bottokentcpproxy.get_status()
+
+@app.post("/api/bot-tcp-proxy/attach")
+async def api_bot_tcp_proxy_attach(request: Request, _=Depends(require_auth)):
+    """وقتی جست‌وجو یک دامنه‌ی سالم پیدا کرد (phase=='done')، این دامنه/پورت به‌عنوان
+    TCP Proxy عمومیِ همون لینک MTProto مشخص‌شده (با uuid) ثبت می‌شود. اگر uuid
+    داده نشده باشه و هیچ لینک MTProtoای وجود نداشته باشه، یکی پیش‌فرض ساخته می‌شود."""
+    status = bottokentcpproxy.get_status()
+    chosen = status.get("result")
+    if status.get("phase") != "done" or not chosen:
+        raise HTTPException(status_code=409, detail="هنوز نتیجه‌ای برای ساخت پروکسی آماده نیست")
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    label = str(body.get("label") or "").strip() or f"TCP-{chosen['domain'].split('.')[0]}"
+    uid = str(body.get("uuid") or "").strip() or None
+
+    attached_link = None
+    if not uid:
+        async with LINKS_LOCK:
+            existing = next((u for u, d in LINKS.items() if d.get("protocol") == "mtproto"), None)
+        uid = existing
+
+    if not uid:
+        uid = generate_uuid()
+        secret = mtproto.generate_secret()
+        link_data = {
+            "label": label, "limit_bytes": 0, "used_bytes": 0,
+            "created_at": datetime.now().isoformat(),
+            "alpn": "h2,http/1.1", "fingerprint": "chrome", "active": True,
+            "expires_at": None, "note": "", "is_default": False, "sub_id": None,
+            "protocol": "mtproto", "ad_tag": None, "mtproto_secret": secret,
+        }
+        async with LINKS_LOCK:
+            LINKS[uid] = link_data
+        try:
+            inst = await mtproto.start_instance(uid, secret=secret, ad_tag=None)
+        except Exception as exc:
+            logger.error(f"راه‌اندازی mtproto ناموفق بود: {exc}")
+            raise HTTPException(status_code=502, detail=f"راه‌اندازی MTProto ناموفق بود: {exc}")
+        async with LINKS_LOCK:
+            LINKS[uid]["mtproto_port"] = inst["port"]
+            LINKS[uid]["mtproto_secret"] = inst["secret"]
+        attached_link = {"uuid": uid, "label": label}
+
+    old_proxy_id = None
+    async with LINKS_LOCK:
+        link = LINKS.get(uid)
+        if link is None:
+            raise HTTPException(status_code=404, detail="لینک پیدا نشد")
+        old_proxy_id = link.get("mtproto_proxy_id")
+        link["mtproto_public_host"] = chosen["domain"]
+        link["mtproto_public_port"] = chosen["port"]
+        link["mtproto_proxy_id"] = chosen["id"]
+        link["mtproto_public_pending"] = False
+        cur_label = link.get("label", label)
+
+    if old_proxy_id and old_proxy_id != chosen["id"]:
+        asyncio.create_task(bottokentcpproxy.delete_public_proxy(old_proxy_id))
+
+    asyncio.create_task(save_state())
+    host = get_host()
+    share_link = generate_share_link(uid, host, remark=f"RVG-{cur_label}", protocol="mtproto")
+    if not attached_link:
+        attached_link = {"uuid": uid, "label": cur_label}
+    log_activity(
+        "link",
+        f"TCP Proxy عمومی «{cur_label}» با دامنه‌ی {chosen['domain']}:{chosen['port']} تنظیم شد",
+        "ok",
+    )
+    return {
+        "ok": True,
+        "result": chosen,
+        "attached_link": attached_link,
+        "share_link": share_link,
+    }
 
 
 @app.post("/api/domain-gen/start")
@@ -1318,7 +1570,7 @@ async def _create_link_core(body: dict) -> dict:
         if manual_port is not None and not (1 <= manual_port <= 65535):
             raise HTTPException(status_code=400, detail="شماره پورت نامعتبر است")
         raw_domain = (body.get("mtproto_domain") or "").strip()
-        domain = raw_domain if raw_domain else mtproto.DEFAULT_FAKE_TLS_DOMAIN
+        domain = mtproto.sanitize_domain(raw_domain)
         try:
             inst = await mtproto.start_instance(
                 uid,
@@ -1337,10 +1589,39 @@ async def _create_link_core(body: dict) -> dict:
         link_data["mtproto_secret"] = inst["secret"]
         link_data["mtproto_domain"] = inst["domain"]
         link_data["mtproto_manual_port"] = manual_port is not None
-        if manual_port is None and bottokentcpproxy.has_saved_token():
+
+        # ── آدرس عمومی دستی ──────────────────────────────────────────────────
+        # اگه کاربر TCP Proxy رو خودش از داشبورد Railway ساخته باشه، دامنه و پورت
+        # عمومیش رو مستقیم اینجا وارد می‌کنه (مثل proxy.rlwy.net:12345). در این
+        # حالت اصلاً سراغ ساخت خودکار/توکن نمی‌ریم.
+        pub_host = (body.get("mtproto_public_host") or "").strip()
+        raw_pub_port = body.get("mtproto_public_port")
+        try:
+            pub_port = int(raw_pub_port) if raw_pub_port not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            pub_port = None
+        if pub_host and pub_port:
+            link_data["mtproto_public_host"] = pub_host
+            link_data["mtproto_public_port"] = pub_port
+            link_data["mtproto_public_pending"] = False
+        elif bottokentcpproxy.has_saved_token():
             link_data["mtproto_public_pending"] = True
             asyncio.create_task(_attach_mtproto_public_proxy(uid, inst["port"], label))
-
+        else:
+            # بدون توکن Railway هیچ TCP Proxy عمومی ساخته نمی‌شه، یعنی این لینک
+            # از بیرون اصلاً قابل دسترس نیست. قبلاً این حالت بی‌صدا رد می‌شد و
+            # کاربر یه لینک ظاهراً سالم ولی کاملاً مرده می‌گرفت.
+            link_data["mtproto_public_pending"] = False
+            logger.error(
+                f"MTProto[{uid[:8]}]: توکن Railway ذخیره نشده — TCP Proxy عمومی ساخته نشد "
+                f"و این لینک از بیرون قابل استفاده نیست. ابتدا از مودال «Bot TCP Proxy» "
+                f"توکن Railway را وارد کنید."
+            )
+            log_activity(
+                "link",
+                f"«{label}» ساخته شد ولی TCP Proxy ندارد (توکن Railway ذخیره نشده) — لینک کار نمی‌کند",
+                "err",
+            )
 
     if protocol == "shadowsocks":
         ss_cipher = body.get("ss_cipher") or DEFAULT_CIPHER
@@ -1390,9 +1671,22 @@ async def list_links(_=Depends(require_auth)):
     result = []
     for uid, d in snap.items():
         proto = d.get("protocol", DEFAULT_PROTOCOL)
+        extra = {}
+        if proto == "mtproto":
+            # هر لینک MTProto حالا instance/پورت/TCP-Proxy مستقل خودش رو داره
+            extra = {
+                "mtproto_public_host": d.get("mtproto_public_host"),
+                "mtproto_public_port": d.get("mtproto_public_port"),
+                "mtproto_public_pending": bool(
+                    d.get("mtproto_public_pending")
+                    or (not d.get("mtproto_manual_port") and bottokentcpproxy.has_saved_token()
+                        and not d.get("mtproto_public_host"))
+                ),
+            }
         result.append({
             "uuid": uid,
             **d,
+            **extra,
             "protocol": proto,
             "expired": is_link_expired(d),
             "vless_link": generate_share_link(uid, host, remark=f"RVG-{d['label']}", protocol=proto),
@@ -1424,6 +1718,22 @@ async def update_link(uid: str, request: Request, _=Depends(require_auth)):
 
         if "label" in body:
             link["label"] = str(body["label"])[:60]
+        # ── ویرایش دستی آدرس عمومی MTProto ────────────────────────────────────
+        # برای وقتی که TCP Proxy رو خودت از داشبورد Railway ساختی و می‌خوای
+        # دامنه/پورت عمومیش رو روی یک لینک موجود ست کنی، بدون ساخت دوباره.
+        if "mtproto_public_host" in body:
+            ph = (body.get("mtproto_public_host") or "").strip()
+            link["mtproto_public_host"] = ph or None
+        if "mtproto_public_port" in body:
+            raw_pp = body.get("mtproto_public_port")
+            try:
+                link["mtproto_public_port"] = (
+                    int(raw_pp) if raw_pp not in (None, "", 0, "0") else None
+                )
+            except (TypeError, ValueError):
+                link["mtproto_public_port"] = None
+        if link.get("mtproto_public_host") and link.get("mtproto_public_port"):
+            link["mtproto_public_pending"] = False
         if "note" in body:
             link["note"] = str(body["note"])[:200]
         if "reset_usage" in body and body["reset_usage"]:
@@ -2375,6 +2685,22 @@ async def api_update(_=Depends(require_auth)):
     task.add_done_callback(_on_done)
     log_activity("system", "درخواست بروزرسانی پنل ثبت شد", "info")
     return {"ok": True, "started": True}
+
+# ── Settings: توقف کامل لاگ‌گیری (برای بیشترین throughput ممکن) ─────────────────
+@app.get("/api/settings/logging")
+async def get_logging_setting(_=Depends(require_auth)):
+    return {"disabled": bool(CONFIG.get("disable_logging"))}
+
+
+@app.post("/api/settings/logging")
+async def set_logging_setting(request: Request, _=Depends(require_auth)):
+    body = await request.json()
+    disabled = bool(body.get("disabled"))
+    CONFIG["disable_logging"] = disabled
+    apply_logging_state()
+    await save_state()
+    return {"ok": True, "disabled": disabled}
+
 
 # ── HTML Pages ───────────────────────────────────────────────────────────────
 from pages import LOGIN_HTML, DASHBOARD_HTML

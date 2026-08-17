@@ -1,10 +1,15 @@
 # bottokentcpproxy.py
 # ══════════════════════════════════════════════════════════════════════════════
-# ساخت خودکار TCP Proxy روی Railway
-# دو حالت:
-#   - BLACKLIST (پیش‌فرض): هر دامنه‌ای غیر از دامنه‌های داخل BLACKLIST_DOMAINS قبول می‌شود.
-#   - WHITELIST: فقط دامنه‌هایی که کاربر مشخص کرده قبول می‌شوند (برای جستجوی دامنه‌ی دلخواه).
-# برای سرعت بالا، درخواست‌ها به‌صورت موازی (چند تلاش هم‌زمان) ارسال می‌شوند.
+# ساخت خودکار TCP Proxy روی Railway — فلوی نهایی:
+#   ۱) پینگ واقعیِ دامنه‌ها از سمت مرورگرِ خودِ کاربر انجام می‌شود (نه از سرور پنل؛
+#      چون سرور پنل خودش روی Railway/خارج است و همیشه به همه‌چیز دسترسی دارد و
+#      نمی‌تواند فیلتر بودنِ یک دامنه از دید اینترنت کاربر را تشخیص دهد). نتیجه‌ی
+#      این پینگ (لیست دامنه‌های سالم) از فرانت‌اند به این ماژول پاس داده می‌شود.
+#   ۲) با پورتی که کاربر داده، مرتب روی Railway پروکسی ساخته می‌شود (create)؛ اگر دامنه‌ی
+#      تصادفیِ برگشتی جزو دامنه‌های «سالم» نبود، حذف (delete) و دوباره تلاش می‌شود — تا
+#      وقتی که یک دامنه‌ی سالم گیر بیاید.
+#   ۳) به محض پیدا شدن، خودکار به یک لینک تلگرامی (با همان پورت داخلی) وصل می‌شود.
+# برای سرعت بالا، ساخت پروکسی به‌صورت موازی (چند تلاش هم‌زمان) ارسال می‌شود.
 # ══════════════════════════════════════════════════════════════════════════════
 
 import asyncio
@@ -21,11 +26,6 @@ logger = logging.getLogger("RVG-Gateway")
 
 GRAPHQL_URL = "https://backboard.railway.app/graphql/v2"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# دامنه‌هایی که قبول نمی‌شوند (حالت پیش‌فرض بلک‌لیست).
-# ──────────────────────────────────────────────────────────────────────────────
-_DEFAULT_BLACKLIST: set[str] = set()
-
 KNOWN_DOMAINS: tuple[str, ...] = (
     "tokaido.proxy.rlwy.net", "shuttle.proxy.rlwy.net", "hayabusa.proxy.rlwy.net",
     "yamabiko.proxy.rlwy.net", "crossover.proxy.rlwy.net", "tramway.proxy.rlwy.net",
@@ -36,27 +36,15 @@ KNOWN_DOMAINS: tuple[str, ...] = (
     "switchyard.proxy.rlwy.net", "shortline.proxy.rlwy.net", "viaduct.proxy.rlwy.net",
     "ballast.proxy.rlwy.net", "kodama.proxy.rlwy.net", "interchange.proxy.rlwy.net",
     "hopper.proxy.rlwy.net", "mainline.proxy.rlwy.net", "trolley.proxy.rlwy.net",
+    "altaria.proxy.rlwy.net", "nozomi.proxy.rlwy.net", "monorail.proxy.rlwy.net",
 )
-
-
-def _load_blacklist() -> set[str]:
-    bl = set(_DEFAULT_BLACKLIST)
-    extra = os.environ.get("BOT_TCP_PROXY_BLACKLIST", "")
-    for item in extra.split(","):
-        item = item.strip().rstrip(".").lower()
-        if item:
-            bl.add(item)
-    return bl
-
-
-BLACKLIST_DOMAINS = _load_blacklist()
 
 MAX_ATTEMPTS = int(os.environ.get("BOT_TCP_PROXY_MAX_ATTEMPTS", 300))
 
-# چند درخواست هم‌زمان (موازی) در هر راند ارسال شود — برای سرعت بالا
+# چند درخواست هم‌زمان (موازی) در هر راند ساخت پروکسی ارسال شود
 CONCURRENCY = int(os.environ.get("BOT_TCP_PROXY_CONCURRENCY", 8))
 
-# تاخیر پایه بین راندها (وقتی ریت‌لیمیت نخوریم صفر است = سریع‌ترین حالت)
+# تاخیر پایه بین راندهای ساخت (وقتی ریت‌لیمیت نخوریم صفر است = سریع‌ترین حالت)
 DELAY_SEC = float(os.environ.get("BOT_TCP_PROXY_DELAY", 0))
 MAX_BACKOFF = 15.0
 
@@ -86,19 +74,15 @@ mutation TcpProxyDelete($id: String!) {
 
 bot_proxy_state = {
     "running": False,
+    "phase": "idle",          # idle | searching | done | error | stopped
     "progress": 0,
     "attempts": 0,
-    "result": None,
+    "result": None,            # {domain, port, application_port, id}
     "error": None,
     "stopped_by_user": False,
-    "mode": "blacklist",       # "blacklist" | "whitelist"
-    "target_domains": [],      # فقط در حالت whitelist پر می‌شود
 }
 bot_proxy_log: deque = deque(maxlen=300)
 _task: Optional[asyncio.Task] = None
-
-# قفلی برای جلوگیری از دوبار "برنده شدن" هم‌زمان در حالت موازی
-_win_lock: Optional[asyncio.Lock] = None
 
 
 def _mask(token: str) -> str:
@@ -116,10 +100,12 @@ def get_status() -> dict:
     return {
         **bot_proxy_state,
         "has_token": has_saved_token(),
-        "blacklist": sorted(BLACKLIST_DOMAINS),
-        "known_domains": list(KNOWN_DOMAINS),
         "logs": list(bot_proxy_log)[-100:],
     }
+
+
+def get_known_domains() -> list:
+    return list(KNOWN_DOMAINS)
 
 
 def has_saved_token() -> bool:
@@ -173,10 +159,6 @@ def _norm_domain(d: str) -> str:
     return (d or "").strip().rstrip(".").lower()
 
 
-def _is_blacklisted(domain: str) -> bool:
-    return _norm_domain(domain) in BLACKLIST_DOMAINS
-
-
 class _RateLimited(Exception):
     pass
 
@@ -227,27 +209,19 @@ async def _delete_proxy(client: httpx.AsyncClient, token: str, proxy_id: str):
         _log(f"⚠ حذف proxy نامطلوب ({proxy_id[:8]}…) ناموفق بود: {exc}")
 
 
-def _domain_accepted(domain: str, mode: str, whitelist: Optional[set[str]]) -> bool:
-    if mode == "whitelist":
-        return domain in (whitelist or set())
-    return not _is_blacklisted(domain)
-
-
 async def _single_attempt(client: httpx.AsyncClient, token: str, service_id: str,
                            environment_id: str, application_port: int,
-                           attempt_no: int, winner_holder: dict,
-                           mode: str, whitelist: Optional[set[str]]):
-    """یک تلاش برای ساخت پروکسی. اگر دامنه قابل قبول بود و هنوز برنده‌ای اعلام نشده، این را برنده می‌کند."""
-    global _win_lock
+                           attempt_no: int, winner_holder: dict, reachable: set,
+                           win_lock: asyncio.Lock):
+    """یک تلاش برای ساخت پروکسی. اگر دامنه جزو دامنه‌های سالم بود و هنوز برنده‌ای
+    اعلام نشده، این را برنده می‌کند؛ در غیر این صورت بلافاصله حذف می‌شود."""
     try:
         proxy = await _create_proxy(client, token, service_id, environment_id, application_port)
     except _AuthError as exc:
-        # این تنها خطای واقعاً fatal است (توکن نامعتبر)
         return ("fatal", str(exc))
     except _RateLimited:
         return "rate_limited"
     except RuntimeError as exc:
-        # خطای GraphQL معمولی (مثلاً تداخل موقتی) — قابل تلاش مجدد است، نباید کل کار را متوقف کند
         _log(f"⚠ خطای موقتی (GraphQL) در تلاش {attempt_no}: {exc}")
         return "retry"
     except Exception as exc:
@@ -258,15 +232,13 @@ async def _single_attempt(client: httpx.AsyncClient, token: str, service_id: str
     domain = _norm_domain(domain_raw)
     proxy_id = proxy.get("id")
 
-    if not _domain_accepted(domain, mode, whitelist):
-        _log(f"تلاش {attempt_no}: دامنه‌ی نامطلوب → {domain_raw} — حذف می‌شود")
+    if domain not in reachable:
+        _log(f"تلاش {attempt_no}: دامنه‌ی {domain_raw} جزو دامنه‌های سالم نیست — حذف می‌شود")
         await _delete_proxy(client, token, proxy_id)
         return "rejected"
 
-    # دامنه قابل قبول است — سعی می‌کنیم برنده شویم
-    async with _win_lock:
+    async with win_lock:
         if winner_holder.get("result") is not None:
-            # یک تلاش دیگر زودتر برنده شده، این یکی را حذف می‌کنیم
             await _delete_proxy(client, token, proxy_id)
             return "discarded_after_win"
         winner_holder["result"] = {
@@ -275,48 +247,40 @@ async def _single_attempt(client: httpx.AsyncClient, token: str, service_id: str
             "application_port": proxy.get("applicationPort"),
             "id": proxy_id,
         }
-    _log(f"✅ موفق! تلاش {attempt_no}: دامنه‌ی قابل قبول → {domain_raw} — پورت TCP: {proxy.get('proxyPort')}")
+    _log(f"✅ موفق! تلاش {attempt_no}: دامنه‌ی سالم پیدا شد → {domain_raw} — پورت TCP: {proxy.get('proxyPort')}")
     return "won"
 
 
-async def run_bot_proxy_job(token: str, application_port: int,
-                             mode: str = "blacklist",
-                             whitelist: Optional[set[str]] = None,
-                             extra_blacklist: Optional[set[str]] = None):
-    global _win_lock
-    _win_lock = asyncio.Lock()
+async def run_bot_proxy_job(token: str, application_port: int, reachable: set):
+    if not reachable:
+        bot_proxy_state.update({
+            "running": False, "phase": "error",
+            "error": "هیچ دامنه‌ی سالمی از مرحله‌ی پینگ ارسال نشده بود",
+        })
+        return
 
-    job_blacklist = set(BLACKLIST_DOMAINS) | (extra_blacklist or set())
+    win_lock = asyncio.Lock()
+    winner_holder: dict = {"result": None}
 
     bot_proxy_state.update({
-        "running": True, "progress": 0, "attempts": 0,
+        "running": True, "phase": "searching", "progress": 0, "attempts": 0,
         "result": None, "error": None, "stopped_by_user": False,
-        "mode": mode, "target_domains": sorted(whitelist) if whitelist else [],
     })
-    bot_proxy_log.clear()
-    if mode == "whitelist":
-        _log(
-            f"شروع؛ حالت جستجوی دامنه‌ی دلخواه ({len(whitelist or [])} دامنه هدف) — "
-            f"همزمانی: {CONCURRENCY} — پورت اپلیکیشن {application_port} — توکن {_mask(token)}"
-        )
-        _log(f"دامنه‌های هدف: {', '.join(sorted(whitelist)) if whitelist else '(خالی)'}")
-    else:
-        _log(
-            f"شروع؛ حالت بلک‌لیست ({len(BLACKLIST_DOMAINS)} دامنه مسدود) — "
-            f"همزمانی: {CONCURRENCY} — پورت اپلیکیشن {application_port} — توکن {_mask(token)}"
-        )
-        _log(f"بلک‌لیست: {', '.join(sorted(BLACKLIST_DOMAINS)) or '(خالی)'}")
+    _log(
+        f"شروع جست‌وجو روی {len(reachable)} دامنه‌ی سالم — همزمانی: {CONCURRENCY} — "
+        f"پورت اپلیکیشن {application_port} — توکن {_mask(token)}"
+    )
 
     try:
         service_id, environment_id = get_service_context()
         _log(f"سرویس شناسایی شد (service={service_id[:8]}… env={environment_id[:8]}…)")
     except RuntimeError as exc:
         bot_proxy_state["running"] = False
+        bot_proxy_state["phase"] = "error"
         bot_proxy_state["error"] = str(exc)
         _log(f"❌ {exc}")
         return
 
-    winner_holder: dict = {"result": None}
     backoff = DELAY_SEC
     total_attempts = 0
 
@@ -331,7 +295,7 @@ async def run_bot_proxy_job(token: str, application_port: int,
                         _single_attempt(
                             client, token, service_id, environment_id,
                             application_port, total_attempts, winner_holder,
-                            mode, whitelist,
+                            reachable, win_lock,
                         )
                     )
 
@@ -340,9 +304,6 @@ async def run_bot_proxy_job(token: str, application_port: int,
 
                 results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                # ── مهم: اول چک می‌کنیم آیا در همین batch برنده پیدا شده ──
-                # اگر پیدا شده، حتی اگر یکی از تلاش‌های موازیِ دیگر همزمان خطا داده باشد،
-                # آن خطا نباید موفقیت را نادیده بگیرد و کل فرآیند را متوقف کند.
                 if winner_holder["result"] is not None:
                     break
 
@@ -359,6 +320,7 @@ async def run_bot_proxy_job(token: str, application_port: int,
 
                 if fatal_error:
                     bot_proxy_state["running"] = False
+                    bot_proxy_state["phase"] = "error"
                     bot_proxy_state["error"] = fatal_error
                     _log(f"❌ توقف: {fatal_error}")
                     return
@@ -375,34 +337,29 @@ async def run_bot_proxy_job(token: str, application_port: int,
         if winner_holder["result"] is not None:
             bot_proxy_state.update({
                 "running": False,
+                "phase": "done",
                 "progress": 100,
                 "result": winner_holder["result"],
             })
         else:
             bot_proxy_state["running"] = False
-            if mode == "whitelist":
-                bot_proxy_state["error"] = (
-                    f"بعد از {total_attempts} تلاش، هیچ‌کدام از دامنه‌های هدف پیدا نشد"
-                )
-            else:
-                bot_proxy_state["error"] = (
-                    f"بعد از {total_attempts} تلاش، هیچ دامنه‌ی قابل‌قبولی (خارج از بلک‌لیست) پیدا نشد"
-                )
+            bot_proxy_state["phase"] = "error"
+            bot_proxy_state["error"] = (
+                f"بعد از {total_attempts} تلاش، به هیچ‌کدام از دامنه‌های سالم نرسیدیم"
+            )
             _log(f"❌ {bot_proxy_state['error']}")
 
     except asyncio.CancelledError:
         bot_proxy_state.update({
             "running": False,
+            "phase": "stopped",
             "error": "فرآیند توسط کاربر متوقف شد",
             "stopped_by_user": True,
         })
         _log("⏹ فرآیند توسط کاربر متوقف شد")
 
 
-def start_job(token: Optional[str], application_port: int,
-              mode: str = "blacklist",
-              target_domains: Optional[list[str]] = None,
-              extra_blacklist_domains: Optional[list[str]] = None):
+def start_job(token: Optional[str], application_port: int, reachable_domains: Optional[list] = None):
     global _task
     token = (token or "").strip()
     if not token:
@@ -412,16 +369,12 @@ def start_job(token: Optional[str], application_port: int,
     if bot_proxy_state["running"]:
         raise RuntimeError("یک فرآیند ساخت TCP Proxy از قبل در حال اجراست")
 
-    whitelist = None
-    if mode == "whitelist":
-        whitelist = {_norm_domain(d) for d in (target_domains or []) if _norm_domain(d)}
-        if not whitelist:
-            raise RuntimeError("برای حالت جستجوی دامنه‌ی دلخواه، حداقل باید یک دامنه وارد کنید")
-
-    extra_bl = {_norm_domain(d) for d in (extra_blacklist_domains or []) if _norm_domain(d)}
+    reachable = {_norm_domain(d) for d in (reachable_domains or []) if _norm_domain(d)}
+    if not reachable:
+        raise RuntimeError("اول باید مرحله‌ی پینگ دامنه‌ها (از مرورگر خودت) انجام شود")
 
     save_token(token)
-    _task = asyncio.create_task(run_bot_proxy_job(token, application_port, mode, whitelist, extra_bl))
+    _task = asyncio.create_task(run_bot_proxy_job(token, application_port, reachable))
     return _task
 
 
@@ -431,19 +384,6 @@ def stop_job() -> bool:
         _task.cancel()
         return True
     return False
-
-
-def add_to_blacklist(domain: str):
-    d = _norm_domain(domain)
-    if d:
-        BLACKLIST_DOMAINS.add(d)
-        _log(f"➕ دامنه به بلک‌لیست اضافه شد: {d}")
-
-
-def remove_from_blacklist(domain: str):
-    d = _norm_domain(domain)
-    BLACKLIST_DOMAINS.discard(d)
-    _log(f"➖ دامنه از بلک‌لیست حذف شد: {d}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

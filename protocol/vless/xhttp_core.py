@@ -42,19 +42,28 @@ REAPER_INTERVAL = 10
 TCP_CONNECT_TIMEOUT = 10.0
 
 # ── تنظیمات موتور تطبیقی ──────────────────────────────────────────────────────
-SOCK_BUF_SIZE = 2 * 1024 * 1024     # افزایش از 2MB به 4MB برای throughput بالاتر
+SOCK_BUF_SIZE = 4 * 1024 * 1024     # افزایش از 2MB به 4MB برای throughput بالاتر
+                                     # (قبلاً کامنت این تغییر رو می‌گفت ولی مقدار واقعی
+                                     #  هنوز 2MB مونده بود — همینجا واقعاً به 4MB رسید،
+                                     #  هم‌راستا با نسخه‌ی Trojan که از قبل 4MB بود)
 
 # _AdaptiveFlow: بازه‌ی مجاز برای high-water تطبیقی (AIMD)
 FLOW_MIN_HW = 256 * 1024
 FLOW_MAX_HW = 32 * 1024 * 1024      # سقف بالاتر برای لینک‌های خیلی سریع
-FLOW_START_HW = 4 * 1024 * 1024
-FLOW_FAST_DRAIN_MS = 2.0    # زیر این یعنی downstream خیلی سریعه → بافر مجاز رو زیاد کن
-FLOW_SLOW_DRAIN_MS = 25.0   # بالای این یعنی backpressure واقعی → فوری نصفش کن
+FLOW_START_HW = 2 * 1024 * 1024     # شروع متعادل (نه ۸MB که لینک ضعیف رو اورلود
+                                     # می‌کرد، نه ۵۱۲KB که هیچ‌وقت رشد نمی‌کرد)
+FLOW_FAST_DRAIN_MS = 12.0   # قبلاً 2.0 بود — این آستانه برای «رشد بده» بود، ولی
+                             # روی لینک ضعیف/موبایل ایران هر drain معمولی هم بیشتر
+                             # از 2ms طول می‌کشه، پس هیچ‌وقت شرط رشد برقرار نمی‌شد و
+                             # بافر برای همیشه روی همون مقدار شروع قفل می‌موند.
+                             # حالا زیر 12ms یعنی "لینک داره خوب جواب می‌ده" → رشد کن.
+FLOW_SLOW_DRAIN_MS = 40.0   # قبلاً 25.0 — بالای این یعنی واقعاً کند شده → فوری نصفش کن
+                             # (فاصله‌ی 12→40 به‌جای 2→25، منطقه‌ی خنثی رو منطقی‌تر می‌کنه)
 
 # _QuotaGate: بازه‌ی مجاز برای batch تطبیقی چک کوتا
 QUOTA_MIN_BATCH = 32 * 1024
-QUOTA_MAX_BATCH = 2 * 1024 * 1024   # سقف بالاتر تا await های کوتا کمتر بشه روی ترافیک سنگین
-QUOTA_START_BATCH = 128 * 1024
+QUOTA_MAX_BATCH = 4 * 1024 * 1024   # سقف بالاتر تا await های کوتا کمتر بشه روی ترافیک سنگین
+QUOTA_START_BATCH = 256 * 1024      # شروع بالاتر: کمتر await کردن در همون ثانیه‌های اول آپلود
 QUOTA_CHECK_INTERVAL = 0.25  # سقف زمانی؛ حتی اگر batch پر نشده، بعد این مدت چک کن
 
 PACKET_UP_HIGH_WATER = 2 * 1024 * 1024  # packet-up همون منطق ساده‌ی قبلی رو داره
@@ -165,7 +174,7 @@ class _AdaptiveFlow:
         elapsed_ms = (time.monotonic() - t0) * 1000
         self.last_drain_ms = elapsed_ms
         if elapsed_ms < FLOW_FAST_DRAIN_MS:
-            self.high_water = min(FLOW_MAX_HW, int(self.high_water * 1.5) + 65536)
+            self.high_water = min(FLOW_MAX_HW, int(self.high_water * 2.0) + 65536)
         elif elapsed_ms > FLOW_SLOW_DRAIN_MS:
             self.high_water = max(FLOW_MIN_HW, self.high_water // 2)
 

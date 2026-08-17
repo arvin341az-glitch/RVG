@@ -12,9 +12,9 @@ from fastapi import APIRouter, Request, HTTPException
 from starlette.requests import ClientDisconnect
 
 from main import stats, connections, error_logs, logger
-from protocol.vless.vless import check_and_use
 from protocol.vless.xhttp_core import (
     PACKET_UP_HIGH_WATER,
+    _QuotaGate,
     ensure_reaper,
     _get_or_create_session,
     _open_tcp_for_session,
@@ -45,7 +45,18 @@ async def packet_up_upload(uuid: str, session_id: str, seq: int, request: Reques
     if not body:
         return {"ok": True}
 
-    if not await check_and_use(uuid, len(body)):
+    # قبلاً هر پکت جدا await check_and_use() می‌کرد => هر POST کوچیک قفل
+    # سراسری LINKS_LOCK رو می‌گرفت. چون packet-up ذاتاً پکت‌های کوچیک و زیاد
+    # می‌فرسته (برخلاف stream-up که یک POST پیوسته‌ست)، این یعنی صدها await
+    # روی یک لاک مشترک به‌ازای هر ثانیه -> همون چیزی که سرعت آپلود رو به چند
+    # صد kbps محدود می‌کرد. الان از همون _QuotaGate تطبیقی که stream-up
+    # استفاده می‌کنه بهره می‌بریم: batch میشه و فقط هر چند صد KB یا هر 250ms
+    # یک‌بار واقعاً await check_and_use می‌شه.
+    gate = sess.get("gate")
+    if gate is None:
+        gate = _QuotaGate(uuid)
+        sess["gate"] = gate
+    if not await gate.add(len(body)):
         await _teardown(session_id, reason="quota/disabled/unknown")
         raise HTTPException(status_code=403, detail="quota/disabled/unknown")
 

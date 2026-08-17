@@ -42,14 +42,15 @@ TROJAN_SOCK_BUF_SIZE = 4 * 1024 * 1024
 # ── AdaptiveFlow (AIMD) مخصوص Trojan-XHTTP ────────────────────────────────────
 TROJAN_FLOW_MIN_HW = 256 * 1024
 TROJAN_FLOW_MAX_HW = 32 * 1024 * 1024
-TROJAN_FLOW_START_HW = 4 * 1024 * 1024
-TROJAN_FLOW_FAST_DRAIN_MS = 2.0
-TROJAN_FLOW_SLOW_DRAIN_MS = 25.0
+TROJAN_FLOW_START_HW = 2 * 1024 * 1024   # شروع متعادل (نه ۸MB، نه ۵۱۲KB)
+TROJAN_FLOW_FAST_DRAIN_MS = 12.0   # قبلاً 2.0 — خیلی سخت‌گیرانه بود، رو لینک ضعیف
+                                    # هیچ‌وقت شرط رشد برقرار نمی‌شد و بافر قفل می‌موند
+TROJAN_FLOW_SLOW_DRAIN_MS = 40.0   # قبلاً 25.0
 
 # ── QuotaGate تطبیقی مخصوص Trojan-XHTTP ───────────────────────────────────────
 TROJAN_QUOTA_MIN_BATCH = 32 * 1024
-TROJAN_QUOTA_MAX_BATCH = 2 * 1024 * 1024
-TROJAN_QUOTA_START_BATCH = 128 * 1024
+TROJAN_QUOTA_MAX_BATCH = 4 * 1024 * 1024
+TROJAN_QUOTA_START_BATCH = 256 * 1024
 TROJAN_QUOTA_CHECK_INTERVAL = 0.25
 
 TROJAN_PACKET_UP_HIGH_WATER = 2 * 1024 * 1024
@@ -154,7 +155,7 @@ class _TrojanAdaptiveFlow:
         elapsed_ms = (time.monotonic() - t0) * 1000
         self.last_drain_ms = elapsed_ms
         if elapsed_ms < TROJAN_FLOW_FAST_DRAIN_MS:
-            self.high_water = min(TROJAN_FLOW_MAX_HW, int(self.high_water * 1.5) + 65536)
+            self.high_water = min(TROJAN_FLOW_MAX_HW, int(self.high_water * 2.0) + 65536)
         elif elapsed_ms > TROJAN_FLOW_SLOW_DRAIN_MS:
             self.high_water = max(TROJAN_FLOW_MIN_HW, self.high_water // 2)
 
