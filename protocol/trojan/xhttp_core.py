@@ -30,30 +30,30 @@ from main import (
 from protocol.vless.vless import check_and_use
 from protocol.trojan.trojan import parse_trojan_header, find_uuid_by_trojan_hash
 
-TROJAN_XHTTP_BUF = 1024 * 1024        # 1MB — هماهنگ با سایر پروتکل‌ها
+TROJAN_XHTTP_BUF = 4 * 1024 * 1024        # 1MB — هماهنگ با سایر پروتکل‌ها
 TROJAN_DOWNLINK_QUEUE_MAX = 512
 TROJAN_SESSION_IDLE_TIMEOUT = 30
 TROJAN_SESSION_IDLE_TIMEOUT_ACTIVE = 90
 TROJAN_REAPER_INTERVAL = 10
 TROJAN_TCP_CONNECT_TIMEOUT = 10.0
 
-TROJAN_SOCK_BUF_SIZE = 4 * 1024 * 1024
+TROJAN_SOCK_BUF_SIZE = 16 * 1024 * 1024
 
 # ── AdaptiveFlow (AIMD) مخصوص Trojan-XHTTP ────────────────────────────────────
 TROJAN_FLOW_MIN_HW = 256 * 1024
-TROJAN_FLOW_MAX_HW = 32 * 1024 * 1024
-TROJAN_FLOW_START_HW = 2 * 1024 * 1024   # شروع متعادل (نه ۸MB، نه ۵۱۲KB)
+TROJAN_FLOW_MAX_HW = 64 * 1024 * 1024
+TROJAN_FLOW_START_HW = 8 * 1024 * 1024   # شروع متعادل (نه ۸MB، نه ۵۱۲KB)
 TROJAN_FLOW_FAST_DRAIN_MS = 12.0   # قبلاً 2.0 — خیلی سخت‌گیرانه بود، رو لینک ضعیف
                                     # هیچ‌وقت شرط رشد برقرار نمی‌شد و بافر قفل می‌موند
 TROJAN_FLOW_SLOW_DRAIN_MS = 40.0   # قبلاً 25.0
 
 # ── QuotaGate تطبیقی مخصوص Trojan-XHTTP ───────────────────────────────────────
 TROJAN_QUOTA_MIN_BATCH = 32 * 1024
-TROJAN_QUOTA_MAX_BATCH = 4 * 1024 * 1024
-TROJAN_QUOTA_START_BATCH = 256 * 1024
+TROJAN_QUOTA_MAX_BATCH = 16 * 1024 * 1024
+TROJAN_QUOTA_START_BATCH = 1 * 1024 * 1024
 TROJAN_QUOTA_CHECK_INTERVAL = 0.25
 
-TROJAN_PACKET_UP_HIGH_WATER = 2 * 1024 * 1024
+TROJAN_PACKET_UP_HIGH_WATER = 8 * 1024 * 1024
 
 trojan_xhttp_sessions: dict = {}
 TROJAN_XHTTP_LOCK = asyncio.Lock()

@@ -32,14 +32,14 @@ from main import (
 # VLESS Relay — بهینه‌شده برای حداکثر throughput و کمترین تاخیر
 # ══════════════════════════════════════════════════════════════════════════════
 
-RELAY_BUF = 1024 * 1024          # 1 MB — هماهنگ با Trojan/Shadowsocks/XHTTP
-SOCK_BUF = 4 * 1024 * 1024       # 4 MB بافر سوکت سطح OS
-WRITE_HIGH_WATER = 512 * 1024    # drain فقط وقتی بیشتر از 512KB در بافر باشه
+RELAY_BUF = 4 * 1024 * 1024          # 1 MB — هماهنگ با Trojan/Shadowsocks/XHTTP
+SOCK_BUF = 16 * 1024 * 1024       # 4 MB بافر سوکت سطح OS
+WRITE_HIGH_WATER = 4 * 1024 * 1024    # drain فقط وقتی بیشتر از 512KB در بافر باشه
 
 # تنظیمات QuotaGate تطبیقی (batched quota check به‌جای per-frame lock)
 QUOTA_MIN_BATCH = 32 * 1024
-QUOTA_MAX_BATCH = 2 * 1024 * 1024
-QUOTA_START_BATCH = 128 * 1024
+QUOTA_MAX_BATCH = 8 * 1024 * 1024
+QUOTA_START_BATCH = 512 * 1024
 QUOTA_CHECK_INTERVAL = 0.25
 
 
