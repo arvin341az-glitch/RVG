@@ -34,7 +34,7 @@ from main import (
 from protocol.vless.vless import parse_vless_header, check_and_use
 
 
-XHTTP_BUF = 1024 * 1024      # افزایش از 512K به 1MB برای throughput بالاتر روی لینک‌های پرسرعت
+XHTTP_BUF = 4 * 1024 * 1024      # افزایش از 512K به 1MB برای throughput بالاتر روی لینک‌های پرسرعت
 DOWNLINK_QUEUE_MAX = 512
 SESSION_IDLE_TIMEOUT = 30          # سشن‌هایی که هنوز TCP باز نکردن (هندشیک ناقص مونده)
 SESSION_IDLE_TIMEOUT_ACTIVE = 90   # سشن‌هایی که TCP باز کردن ولی دیگه هیچ ترافیکی (نه رید نه رایت) ردوبدل نشده
@@ -42,15 +42,15 @@ REAPER_INTERVAL = 10
 TCP_CONNECT_TIMEOUT = 10.0
 
 # ── تنظیمات موتور تطبیقی ──────────────────────────────────────────────────────
-SOCK_BUF_SIZE = 4 * 1024 * 1024     # افزایش از 2MB به 4MB برای throughput بالاتر
+SOCK_BUF_SIZE = 16 * 1024 * 1024     # افزایش از 2MB به 4MB برای throughput بالاتر
                                      # (قبلاً کامنت این تغییر رو می‌گفت ولی مقدار واقعی
                                      #  هنوز 2MB مونده بود — همینجا واقعاً به 4MB رسید،
                                      #  هم‌راستا با نسخه‌ی Trojan که از قبل 4MB بود)
 
 # _AdaptiveFlow: بازه‌ی مجاز برای high-water تطبیقی (AIMD)
 FLOW_MIN_HW = 256 * 1024
-FLOW_MAX_HW = 32 * 1024 * 1024      # سقف بالاتر برای لینک‌های خیلی سریع
-FLOW_START_HW = 2 * 1024 * 1024     # شروع متعادل (نه ۸MB که لینک ضعیف رو اورلود
+FLOW_MAX_HW = 64 * 1024 * 1024      # سقف بالاتر برای لینک‌های خیلی سریع
+FLOW_START_HW = 8 * 1024 * 1024     # شروع متعادل (نه ۸MB که لینک ضعیف رو اورلود
                                      # می‌کرد، نه ۵۱۲KB که هیچ‌وقت رشد نمی‌کرد)
 FLOW_FAST_DRAIN_MS = 12.0   # قبلاً 2.0 بود — این آستانه برای «رشد بده» بود، ولی
                              # روی لینک ضعیف/موبایل ایران هر drain معمولی هم بیشتر
@@ -62,11 +62,11 @@ FLOW_SLOW_DRAIN_MS = 40.0   # قبلاً 25.0 — بالای این یعنی و�
 
 # _QuotaGate: بازه‌ی مجاز برای batch تطبیقی چک کوتا
 QUOTA_MIN_BATCH = 32 * 1024
-QUOTA_MAX_BATCH = 4 * 1024 * 1024   # سقف بالاتر تا await های کوتا کمتر بشه روی ترافیک سنگین
-QUOTA_START_BATCH = 256 * 1024      # شروع بالاتر: کمتر await کردن در همون ثانیه‌های اول آپلود
+QUOTA_MAX_BATCH = 16 * 1024 * 1024   # سقف بالاتر تا await های کوتا کمتر بشه روی ترافیک سنگین
+QUOTA_START_BATCH = 1 * 1024 * 1024      # شروع بالاتر: کمتر await کردن در همون ثانیه‌های اول آپلود
 QUOTA_CHECK_INTERVAL = 0.25  # سقف زمانی؛ حتی اگر batch پر نشده، بعد این مدت چک کن
 
-PACKET_UP_HIGH_WATER = 2 * 1024 * 1024  # packet-up همون منطق ساده‌ی قبلی رو داره
+PACKET_UP_HIGH_WATER = 8 * 1024 * 1024  # packet-up همون منطق ساده‌ی قبلی رو داره
 
 xhttp_sessions: dict = {}
 XHTTP_LOCK = asyncio.Lock()

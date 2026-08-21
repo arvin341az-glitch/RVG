@@ -19,9 +19,9 @@ from main import (
     is_link_allowed,
 )
 
-RELAY_BUF = 1024 * 1024
-SOCK_BUF = 4 * 1024 * 1024
-WRITE_HIGH_WATER = 512 * 1024
+RELAY_BUF = 4 * 1024 * 1024
+SOCK_BUF = 16 * 1024 * 1024
+WRITE_HIGH_WATER = 4 * 1024 * 1024
 
 CIPHERS = {
     "chacha20-ietf-poly1305": {"key_len": 32, "salt_len": 32, "nonce_len": 12, "cls": ChaCha20Poly1305},

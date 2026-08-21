@@ -60,7 +60,7 @@ logger = logging.getLogger("RVG-Gateway")
 
 IRAN_TZ = ZoneInfo("Asia/Tehran")
 
-app = FastAPI(title="RVG Gateway - codebox", docs_url=None, redoc_url=None)
+app = FastAPI(title="CB Gateway", docs_url=None, redoc_url=None)
 
 # وقتی مستقیم با `python main.py` اجرا میشه، این ماژول با نام "__main__" ثبت
 # میشه نه "main". چون protocol/vless/vless.py و protocol/trojan/trojan.py با
@@ -312,7 +312,7 @@ async def startup():
     await load_state()
     await _restart_mtproto_instances()
     log_activity("system", "سرور راه‌اندازی شد", "ok")
-    logger.info(f"RVG Gateway v9.2 started on port {CONFIG['port']}")
+    logger.info(f"CB Gateway v9.2 started on port {CONFIG['port']}")
 
 async def _restart_mtproto_instances():
     """بعد از بالا اومدن پنل، به‌ازای هر لینک MTProto فعال یک پروسه‌ی جدای
@@ -454,7 +454,7 @@ async def _update_mtproto_ad_tag(uuid: str, ad_tag: str):
             link["ad_tag"] = ad_tag
             link["ad_tag_status"] = "done"
             link["ad_tag_link"] = generate_share_link(
-                uuid, get_host(), remark=f"RVG-{link.get('label','')}", protocol="mtproto"
+                uuid, get_host(), remark=f"CB-{link.get('label','')}", protocol="mtproto"
             )
 
         if inst["port"] != old_port and old_proxy_id and not manual_port:
@@ -496,7 +496,7 @@ def generate_uuid() -> str:
 def now_ir() -> datetime:
     return datetime.now(IRAN_TZ)
 
-def generate_share_link(uuid: str, host: str, remark: str = "RVG", protocol: str = DEFAULT_PROTOCOL) -> str:
+def generate_share_link(uuid: str, host: str, remark: str = "CB", protocol: str = DEFAULT_PROTOCOL) -> str:
     link = LINKS.get(uuid) or {}
     alpn = link.get("alpn", "h2")
     fp = link.get("fingerprint", "chrome")
@@ -769,7 +769,7 @@ async def ensure_default_link():
 # ── Basic endpoints ───────────────────────────────────────────────────────────
 @app.get("/")
 async def root():
-    return {"service": "RVG Gateway", "version": "9.2", "status": "active", "channel": "https://t.me/CodeBoxo"}
+    return {"service": "CB Gateway", "version": "9.2", "status": "active", "channel": "https://t.me/CodeBoxo"}
 
 @app.get("/health")
 async def health():
@@ -784,7 +784,7 @@ async def subscription_single(uuid: str):
         raise HTTPException(status_code=404, detail="not found or inactive")
     host = get_host()
     proto = link.get("protocol", DEFAULT_PROTOCOL)
-    vless = generate_share_link(uuid, host, remark=f"RVG-{link['label']}", protocol=proto)
+    vless = generate_share_link(uuid, host, remark=f"CB-{link['label']}", protocol=proto)
     content = base64.b64encode(vless.encode()).decode()
     headers = build_sub_headers(link["label"], link.get("used_bytes", 0), link.get("limit_bytes", 0), link.get("expires_at"))
     return Response(content=content, media_type="text/plain", headers=headers)
@@ -795,7 +795,7 @@ async def subscription_all(_=Depends(require_auth)):
     async with LINKS_LOCK:
         allowed = [d for d in LINKS.values() if is_link_allowed(d)]
         lines = [
-            generate_share_link(uid, host, remark=f"RVG-{d['label']}", protocol=d.get("protocol", DEFAULT_PROTOCOL))
+            generate_share_link(uid, host, remark=f"CB-{d['label']}", protocol=d.get("protocol", DEFAULT_PROTOCOL))
             for uid, d in LINKS.items()
             if is_link_allowed(d)
         ]
@@ -804,7 +804,7 @@ async def subscription_all(_=Depends(require_auth)):
         expiries = [d["expires_at"] for d in allowed if d.get("expires_at")]
     nearest_exp = min(expiries) if expiries else None
     content = base64.b64encode("\n".join(lines).encode()).decode()
-    headers = build_sub_headers("RVG-All", total_used, total_limit, nearest_exp)
+    headers = build_sub_headers("CB-All", total_used, total_limit, nearest_exp)
     return Response(content=content, media_type="text/plain", headers=headers)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -992,7 +992,7 @@ async def sub_group_subscription(uuid_key: str, request: Request):
         for lid in link_ids:
             link = LINKS.get(lid)
             if link and is_link_allowed(link):
-                lines.append(generate_share_link(lid, host, remark=f"RVG-{link['label']}", protocol=link.get("protocol", DEFAULT_PROTOCOL)))
+                lines.append(generate_share_link(lid, host, remark=f"CB-{link['label']}", protocol=link.get("protocol", DEFAULT_PROTOCOL)))
                 allowed_links.append(link)
         total_used = sum(l.get("used_bytes", 0) for l in allowed_links)
         total_limit = sum(l.get("limit_bytes", 0) for l in allowed_links)
@@ -1266,7 +1266,7 @@ async def api_mtproto_fix_proxy(request: Request, _=Depends(require_auth)):
         fixed.append({
             "uuid": uid, "label": label,
             "host": pub["domain"], "port": pub["port"],
-            "link": generate_share_link(uid, get_host(), remark=f"RVG-{label}", protocol="mtproto"),
+            "link": generate_share_link(uid, get_host(), remark=f"CB-{label}", protocol="mtproto"),
         })
         log_activity("link", f"TCP Proxy عمومی «{label}» ساخته شد ({pub['domain']}:{pub['port']})", "ok")
 
@@ -1415,7 +1415,7 @@ async def api_bot_tcp_proxy_attach(request: Request, _=Depends(require_auth)):
 
     asyncio.create_task(save_state())
     host = get_host()
-    share_link = generate_share_link(uid, host, remark=f"RVG-{cur_label}", protocol="mtproto")
+    share_link = generate_share_link(uid, host, remark=f"CB-{cur_label}", protocol="mtproto")
     if not attached_link:
         attached_link = {"uuid": uid, "label": cur_label}
     log_activity(
@@ -1647,7 +1647,7 @@ async def _create_link_core(body: dict) -> dict:
         "uuid": uid,
         **LINKS[uid],
         "expired": False,
-        "vless_link": generate_share_link(uid, host, remark=f"RVG-{label}", protocol=protocol),
+        "vless_link": generate_share_link(uid, host, remark=f"CB-{label}", protocol=protocol),
         "sub_url": f"https://{host}/sub/{uid}",
     }
 
@@ -1689,7 +1689,7 @@ async def list_links(_=Depends(require_auth)):
             **extra,
             "protocol": proto,
             "expired": is_link_expired(d),
-            "vless_link": generate_share_link(uid, host, remark=f"RVG-{d['label']}", protocol=proto),
+            "vless_link": generate_share_link(uid, host, remark=f"CB-{d['label']}", protocol=proto),
             "sub_url": f"https://{host}/sub/{uid}",
         })
     result.sort(key=lambda x: x["created_at"], reverse=True)
@@ -2538,7 +2538,7 @@ async def public_sub_data(uuid_key: str, request: Request):
             "protocol": proto,
             "used_bytes": link.get("used_bytes", 0),
             "limit_bytes": link.get("limit_bytes", 0),
-            "vless_link": generate_share_link(lid, host, remark=f"RVG-{link['label']}", protocol=proto),
+            "vless_link": generate_share_link(lid, host, remark=f"CB-{link['label']}", protocol=proto),
         })
 
     # ۲.۵ کانفیگ‌های نودهای دیگر
