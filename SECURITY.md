@@ -11,6 +11,13 @@ The following versions of Rvg are currently receiving security updates:
 
 > Update this table with real version numbers once you have official releases (e.g. 1.x, 2.x).
 
+## Bot Admin API Deployment
+
+- Set `RVG_API_KEY` to at least 32 random bytes (for example, `openssl rand -hex 32`).
+- Send it only in the `X-API-KEY` header and only over HTTPS; never put it in a URL, bot message, or log entry.
+- Use `RVG_API_KEYS` temporarily to overlap old and new keys during rotation, then remove the old key.
+- Keep the API disabled (its fail-closed default) when no Telegram bot integration is needed.
+
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability in Rvg, please **do not** open a public GitHub issue.

@@ -74,10 +74,11 @@ _hash_cache = _TrojanHashCache()
 # ══════════════════════════════════════════════════════════════════════════════
 
 class _QuotaGate:
-    __slots__ = ("uuid", "pending", "last_check", "ok", "batch_bytes", "rate_ewma")
+    __slots__ = ("uuid", "direction", "pending", "last_check", "ok", "batch_bytes", "rate_ewma")
 
-    def __init__(self, uuid: str):
+    def __init__(self, uuid: str, direction: str | None = None):
         self.uuid = uuid
+        self.direction = direction
         self.pending = 0
         self.last_check = time.monotonic()
         self.ok = True
@@ -99,7 +100,7 @@ class _QuotaGate:
                 self.batch_bytes = max(QUOTA_MIN_BATCH, min(QUOTA_MAX_BATCH, target or QUOTA_MIN_BATCH))
             self.last_check = now
             try:
-                self.ok = await check_and_use(self.uuid, flush)
+                self.ok = await check_and_use(self.uuid, flush, self.direction)
             except Exception as exc:
                 logger.error(f"Trojan _QuotaGate.add failed uuid={self.uuid[:8]}: {exc}")
                 self.ok = False
@@ -109,7 +110,7 @@ class _QuotaGate:
         if self.pending:
             flush, self.pending = self.pending, 0
             try:
-                self.ok = self.ok and await check_and_use(self.uuid, flush)
+                self.ok = self.ok and await check_and_use(self.uuid, flush, self.direction)
             except Exception as exc:
                 logger.error(f"Trojan _QuotaGate.flush failed uuid={self.uuid[:8]}: {exc}")
                 self.ok = False

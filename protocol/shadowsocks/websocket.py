@@ -33,7 +33,7 @@ from protocol.shadowsocks.shadowsocks import (
 
 
 async def relay_ws_to_tcp(ws: WebSocket, writer: asyncio.StreamWriter, stream: _AEADStream, conn_id: str, uuid: str):
-    gate = _QuotaGate(uuid)
+    gate = _QuotaGate(uuid, "upload")
     conn = connections.get(conn_id)
     try:
         while True:
@@ -71,7 +71,7 @@ async def relay_ws_to_tcp(ws: WebSocket, writer: asyncio.StreamWriter, stream: _
 
 
 async def relay_tcp_to_ws(ws: WebSocket, reader: asyncio.StreamReader, stream: _AEADStream, conn_id: str, uuid: str):
-    gate = _QuotaGate(uuid)
+    gate = _QuotaGate(uuid, "download")
     conn = connections.get(conn_id)
     try:
         while True:
@@ -155,7 +155,7 @@ async def shadowsocks_ws_tunnel(ws: WebSocket):
         initial_data = first_payload[hlen:]
         extra_chunks = chunks[1:]
 
-        if not await check_and_use(uuid, len(first_chunk)):
+        if not await check_and_use(uuid, len(first_chunk), "upload"):
             await ws.close(code=1008, reason="quota/disabled")
             return
         stats["total_requests"] += 1

@@ -46,7 +46,7 @@ async def trojan_packet_up_upload(uuid: str, session_id: str, seq: int, request:
     # await روی هر پکت کوچیک، تا قفل سراسری هر پکت رو گلوگاه نکنه.
     gate = sess.get("gate")
     if gate is None:
-        gate = _TrojanQuotaGate(uuid)
+        gate = _TrojanQuotaGate(uuid, "upload")
         sess["gate"] = gate
     if not await gate.add(len(body)):
         await _teardown(session_id, reason="quota/disabled/unknown")

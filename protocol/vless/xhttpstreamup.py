@@ -38,7 +38,7 @@ async def stream_up_upload(uuid: str, session_id: str, request: Request):
 
     gate = sess.get("gate")
     if gate is None:
-        gate = _QuotaGate(uuid)
+        gate = _QuotaGate(uuid, "upload")
         sess["gate"] = gate
 
     flow = sess.get("flow")

@@ -144,8 +144,11 @@ flowchart LR
 RVG/
 ├── protocol/                 # Per-protocol relay implementations
 ├── main.py                   # FastAPI app entrypoint
-├── central.py                 # Core orchestration logic
-├── pages.py                   # Dashboard route/page handlers
+├── api_v1.py                 # API-key protected bot administration router
+├── auth.py                   # Constant-time X-API-KEY dependency
+├── schemas.py                # Strict Pydantic v2 API contracts
+├── central.py                # Core orchestration logic
+├── pages.py                  # Dashboard route/page handlers
 ├── updater.py                  # Self-update logic
 ├── botgeneratedomin.py         # Telegram bot: domain generation
 ├── bottokentcpproxy.py         # TCP proxy automation via Telegram
@@ -243,6 +246,49 @@ The dashboard will be available at `http://localhost:8000/dashboard`.
 | `PORT` | Port the service runs on | `8000` |
 | `SECRET_KEY` | Internal security key | Randomly generated |
 | `RAILWAY_PUBLIC_DOMAIN` | Public Railway domain (auto-set) | `localhost` |
+| `RVG_API_KEY` | Required secret for the bot admin API (`X-API-KEY`) | No default; API fails closed |
+| `RVG_API_KEYS` | Optional comma-separated keys for zero-downtime rotation | Empty |
+| `PUBLIC_BASE_URL` | Optional canonical URL used in generated subscription URLs | Derived from public domain |
+
+Generate a strong API key and store it only in the panel and bot environments:
+
+```bash
+openssl rand -hex 32
+```
+
+### Bot administration REST API
+
+Every `/api/v1` request requires `X-API-KEY`. The API uses strict Pydantic v2
+validation and a stable response envelope:
+
+```json
+{"success": true, "data": {}, "error": null, "message": "..."}
+```
+
+```bash
+curl -X POST "https://panel.example.com/api/v1/users" \
+  -H "X-API-KEY: $RVG_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"alice","traffic_limit_gb":50,"expire_days":30,"protocol":"vless"}'
+```
+
+Available operations:
+
+- `POST /api/v1/users`
+- `GET /api/v1/users/{username}`
+- `PATCH /api/v1/users/{username}/extend`
+- `PATCH /api/v1/users/{username}/status`
+- `POST /api/v1/users/{username}/reset-traffic`
+- `DELETE /api/v1/users/{username}`
+- `GET /api/v1/users/{username}/subscription?format=base64|plain`
+- `GET /api/v1/users/{username}/links`
+- `GET /api/v1/system/stats`
+
+See [`examples/telegram_bot_client.py`](examples/telegram_bot_client.py) for an
+async `httpx` integration. The current RVG core supports VLESS, Trojan,
+Shadowsocks and MTProto. MTProto creation requires a Railway token already saved
+through the panel so its public TCP proxy can be provisioned synchronously.
+VMess is not advertised because this gateway does not implement a VMess inbound.
 
 <br/>
 
@@ -267,7 +313,7 @@ The dashboard will be available at `http://localhost:8000/dashboard`.
 - [x] Traffic dashboard with charts
 - [ ] Persistent storage (Redis / PostgreSQL)
 - [ ] Multi-node / cluster support
-- [ ] Public REST API for external integrations
+- [x] API-key protected REST API for Telegram/external integrations
 
 <br/>
 
@@ -423,8 +469,11 @@ flowchart RL
 RVG/
 ├── protocol/                 # پیاده‌سازی ریلی هر پروتکل
 ├── main.py                   # نقطه ورود اپلیکیشن FastAPI
-├── central.py                 # منطق اصلی هماهنگ‌سازی
-├── pages.py                   # هندلر مسیرها/صفحات داشبورد
+├── api_v1.py                 # روتر مدیریتی امن برای ربات
+├── auth.py                   # احراز هویت X-API-KEY
+├── schemas.py                # قراردادهای سخت‌گیرانه Pydantic v2
+├── central.py                # منطق اصلی هماهنگ‌سازی
+├── pages.py                  # هندلر مسیرها/صفحات داشبورد
 ├── updater.py                  # منطق به‌روزرسانی خودکار
 ├── botgeneratedomin.py         # ربات تلگرام: تولید دامنه
 ├── bottokentcpproxy.py         # اتوماسیون پروکسی TCP از طریق تلگرام
@@ -522,6 +571,9 @@ python main.py
 | `PORT` | پورت اجرای سرویس | `8000` |
 | `SECRET_KEY` | کلید امنیتی داخلی | تولید تصادفی |
 | `RAILWAY_PUBLIC_DOMAIN` | دامنه عمومی Railway (خودکار) | `localhost` |
+| `RVG_API_KEY` | کلید الزامی API ربات در هدر `X-API-KEY` | بدون مقدار پیش‌فرض |
+| `RVG_API_KEYS` | کلیدهای چرخشی، جداشده با ویرگول | خالی |
+| `PUBLIC_BASE_URL` | آدرس عمومی ثابت برای لینک‌های اشتراک | از دامنه عمومی |
 
 <br/>
 
@@ -532,7 +584,7 @@ python main.py
 - [x] داشبورد ترافیک با نمودار
 - [ ] ذخیره‌سازی دائمی (Redis / PostgreSQL)
 - [ ] پشتیبانی چندنودی / کلاستر
-- [ ] API عمومی REST برای یکپارچه‌سازی با سرویس‌های دیگر
+- [x] API مدیریتی REST با کلید امن برای ربات تلگرام و سرویس‌های دیگر
 
 <br/>
 

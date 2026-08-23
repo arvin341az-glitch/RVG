@@ -32,7 +32,7 @@ from protocol.vless.vless import check_and_use
 
 
 async def _relay_ws_to_tcp(ws: WebSocket, writer: asyncio.StreamWriter, conn_id: str, uuid: str):
-    gate = _QuotaGate(uuid)
+    gate = _QuotaGate(uuid, "upload")
     conn = connections.get(conn_id)
     try:
         while True:
@@ -63,7 +63,7 @@ async def _relay_ws_to_tcp(ws: WebSocket, writer: asyncio.StreamWriter, conn_id:
 
 
 async def _relay_tcp_to_ws(ws: WebSocket, reader: asyncio.StreamReader, conn_id: str, uuid: str):
-    gate = _QuotaGate(uuid)
+    gate = _QuotaGate(uuid, "download")
     conn = connections.get(conn_id)
     # Trojan: بدون response prefix (برخلاف VLESS که \x00\x00 نیاز داره)
     try:
@@ -121,7 +121,7 @@ async def trojan_ws_tunnel(ws: WebSocket):
         logger.info(f"✅ Trojan-WS [{conn_id}] uuid={uuid[:8]}… ip={ip} total={len(connections)}")
         log_activity("connection", f"اتصال Trojan جدید از {ip} (کانفیگ {link.get('label','?')})", "info")
 
-        if not await check_and_use(uuid, hlen):
+        if not await check_and_use(uuid, hlen, "upload"):
             await ws.close(code=1008, reason="quota/disabled")
             return
 

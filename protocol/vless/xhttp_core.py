@@ -112,10 +112,11 @@ class _QuotaGate:
     ثابت، نرخ واقعی ترافیک هر سشن رو با EWMA اندازه می‌گیره و اندازه‌ی batch رو زنده
     عوض می‌کنه.
     """
-    __slots__ = ("uuid", "pending", "last_check", "ok", "batch_bytes", "rate_ewma")
+    __slots__ = ("uuid", "direction", "pending", "last_check", "ok", "batch_bytes", "rate_ewma")
 
-    def __init__(self, uuid: str):
+    def __init__(self, uuid: str, direction: str | None = None):
         self.uuid = uuid
+        self.direction = direction
         self.pending = 0
         self.last_check = time.monotonic()
         self.ok = True
@@ -137,7 +138,7 @@ class _QuotaGate:
                 self.batch_bytes = max(QUOTA_MIN_BATCH, min(QUOTA_MAX_BATCH, target or QUOTA_MIN_BATCH))
             self.last_check = now
             try:
-                self.ok = await check_and_use(self.uuid, flush)
+                self.ok = await check_and_use(self.uuid, flush, self.direction)
             except Exception as exc:
                 logger.error(f"XHTTP _QuotaGate.add check_and_use failed uuid={self.uuid[:8]}: {type(exc).__name__}: {exc}")
                 self.ok = False
@@ -148,7 +149,7 @@ class _QuotaGate:
         if self.pending:
             flush, self.pending = self.pending, 0
             try:
-                self.ok = self.ok and await check_and_use(self.uuid, flush)
+                self.ok = self.ok and await check_and_use(self.uuid, flush, self.direction)
             except Exception as exc:
                 logger.error(f"XHTTP _QuotaGate.flush check_and_use failed uuid={self.uuid[:8]}: {type(exc).__name__}: {exc}")
                 self.ok = False
@@ -314,7 +315,7 @@ def ensure_reaper():
 
 
 async def _pump_tcp_to_queue(session_id: str, uuid: str, reader: asyncio.StreamReader, down_q: asyncio.Queue, vless_prefix: bool = True, conn_id: str = ""):
-    gate = _QuotaGate(uuid)
+    gate = _QuotaGate(uuid, "download")
     close_reason = "remote-eof"
     first = True
     # conn_id رو یک‌بار cache می‌کنیم تا در هر iteration از XHTTP_LOCK بی‌نیاز بشیم

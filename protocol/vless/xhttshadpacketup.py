@@ -54,7 +54,7 @@ async def packet_up_upload(uuid: str, session_id: str, seq: int, request: Reques
     # یک‌بار واقعاً await check_and_use می‌شه.
     gate = sess.get("gate")
     if gate is None:
-        gate = _QuotaGate(uuid)
+        gate = _QuotaGate(uuid, "upload")
         sess["gate"] = gate
     if not await gate.add(len(body)):
         await _teardown(session_id, reason="quota/disabled/unknown")

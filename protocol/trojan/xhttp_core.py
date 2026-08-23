@@ -95,10 +95,11 @@ def _tune_socket(writer: asyncio.StreamWriter):
 
 class _TrojanQuotaGate:
     """batch quota check تطبیقی (EWMA)، مستقل از موتور VLESS."""
-    __slots__ = ("uuid", "pending", "last_check", "ok", "batch_bytes", "rate_ewma")
+    __slots__ = ("uuid", "direction", "pending", "last_check", "ok", "batch_bytes", "rate_ewma")
 
-    def __init__(self, uuid: str):
+    def __init__(self, uuid: str, direction: str | None = None):
         self.uuid = uuid
+        self.direction = direction
         self.pending = 0
         self.last_check = time.monotonic()
         self.ok = True
@@ -120,7 +121,7 @@ class _TrojanQuotaGate:
                 self.batch_bytes = max(TROJAN_QUOTA_MIN_BATCH, min(TROJAN_QUOTA_MAX_BATCH, target or TROJAN_QUOTA_MIN_BATCH))
             self.last_check = now
             try:
-                self.ok = await check_and_use(self.uuid, flush)
+                self.ok = await check_and_use(self.uuid, flush, self.direction)
             except Exception as exc:
                 logger.error(f"Trojan-XHTTP QuotaGate.add failed uuid={self.uuid[:8]}: {type(exc).__name__}: {exc}")
                 self.ok = False
@@ -131,7 +132,7 @@ class _TrojanQuotaGate:
         if self.pending:
             flush, self.pending = self.pending, 0
             try:
-                self.ok = self.ok and await check_and_use(self.uuid, flush)
+                self.ok = self.ok and await check_and_use(self.uuid, flush, self.direction)
             except Exception as exc:
                 logger.error(f"Trojan-XHTTP QuotaGate.flush failed uuid={self.uuid[:8]}: {type(exc).__name__}: {exc}")
                 self.ok = False
@@ -295,7 +296,7 @@ def ensure_reaper():
 
 async def _pump_tcp_to_queue(session_id: str, uuid: str, reader: asyncio.StreamReader, down_q: asyncio.Queue, conn_id: str = ""):
     """Trojan نیازی به پیشوند \\x00\\x00 نداره — برخلاف VLESS، فریم اول دستکاری نمی‌شه."""
-    gate = _TrojanQuotaGate(uuid)
+    gate = _TrojanQuotaGate(uuid, "download")
     close_reason = "remote-eof"
     cached_conn = connections.get(conn_id) if conn_id else None
     try:

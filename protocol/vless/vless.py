@@ -64,10 +64,11 @@ class _QuotaGate:
     LINKS_LOCK روی هر فریم WS، هر QUOTA_CHECK_INTERVAL ثانیه یا هر QUOTA حجم
     batch شده یک بار چک می‌کنه. همون الگویی که Trojan/Shadowsocks استفاده می‌کنن.
     """
-    __slots__ = ("uuid", "pending", "last_check", "ok", "batch_bytes", "rate_ewma")
+    __slots__ = ("uuid", "direction", "pending", "last_check", "ok", "batch_bytes", "rate_ewma")
 
-    def __init__(self, uuid: str):
+    def __init__(self, uuid: str, direction: str | None = None):
         self.uuid = uuid
+        self.direction = direction
         self.pending = 0
         self.last_check = time.monotonic()
         self.ok = True
@@ -89,7 +90,7 @@ class _QuotaGate:
                 self.batch_bytes = max(QUOTA_MIN_BATCH, min(QUOTA_MAX_BATCH, target or QUOTA_MIN_BATCH))
             self.last_check = now
             try:
-                self.ok = await check_and_use(self.uuid, flush)
+                self.ok = await check_and_use(self.uuid, flush, self.direction)
             except Exception as exc:
                 logger.error(f"VLESS QuotaGate.add failed uuid={self.uuid[:8]}: {type(exc).__name__}: {exc}")
                 self.ok = False
@@ -100,7 +101,7 @@ class _QuotaGate:
         if self.pending:
             flush, self.pending = self.pending, 0
             try:
-                self.ok = self.ok and await check_and_use(self.uuid, flush)
+                self.ok = self.ok and await check_and_use(self.uuid, flush, self.direction)
             except Exception as exc:
                 logger.error(f"VLESS QuotaGate.flush failed uuid={self.uuid[:8]}: {type(exc).__name__}: {exc}")
                 self.ok = False
@@ -137,20 +138,25 @@ async def parse_vless_header(chunk: bytes):
         raise ValueError(f"unknown addr type: {addr_type}")
     return command, address, port, chunk[pos:]
 
-async def check_and_use(uid: str, n: int) -> bool:
+async def check_and_use(uid: str, n: int, direction: str | None = None) -> bool:
+    """Atomically enforce quota and account aggregate/directional traffic."""
     async with LINKS_LOCK:
         link = LINKS.get(uid)
         if link is None:
             return False
         if not is_link_allowed(link):
             return False
-        link["used_bytes"] += n
+        link["used_bytes"] = int(link.get("used_bytes") or 0) + n
+        if direction == "upload":
+            link["upload_bytes"] = int(link.get("upload_bytes") or 0) + n
+        elif direction == "download":
+            link["download_bytes"] = int(link.get("download_bytes") or 0) + n
         stats["total_bytes"] += n
         hourly_traffic[now_ir().strftime("%H:00")] += n
     return True
 
 async def relay_ws_to_tcp(ws: WebSocket, writer: asyncio.StreamWriter, conn_id: str, uid: str):
-    gate = _QuotaGate(uid)
+    gate = _QuotaGate(uid, "upload")
     conn = connections.get(conn_id)
     try:
         while True:
@@ -180,7 +186,7 @@ async def relay_ws_to_tcp(ws: WebSocket, writer: asyncio.StreamWriter, conn_id: 
             pass
 
 async def relay_tcp_to_ws(ws: WebSocket, reader: asyncio.StreamReader, conn_id: str, uid: str, vless_prefix: bool = True):
-    gate = _QuotaGate(uid)
+    gate = _QuotaGate(uid, "download")
     conn = connections.get(conn_id)
     first = True
     try:

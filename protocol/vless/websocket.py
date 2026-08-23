@@ -65,7 +65,7 @@ async def websocket_tunnel(ws: WebSocket, uuid: str):
 
         command, address, port, payload = await parse_vless_header(first_chunk)
 
-        if not await check_and_use(uuid, len(first_chunk)):
+        if not await check_and_use(uuid, len(first_chunk), "upload"):
             await ws.close(code=1008, reason="quota/disabled")
             return
 

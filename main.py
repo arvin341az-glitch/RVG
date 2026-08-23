@@ -3,6 +3,7 @@ import sys
 
 _PACKAGES = [
     "fastapi==0.104.1",
+    "pydantic>=2.4,<3.0",
     "uvicorn[standard]==0.24.0",
     "uvloop>=0.19.0",
     "httptools>=0.6.0",
@@ -10,6 +11,7 @@ _PACKAGES = [
     "websockets==12.0",
     "aiofiles>=23.2.1",
     "cryptography>=39.0.0",
+    "psutil>=5.9.0,<8.0",
 ]
 
 def _install_packages():
@@ -26,6 +28,7 @@ def _install_packages():
 # _install_packages()  # deps preinstalled for local test
 
 import asyncio
+import copy
 import json
 import os
 import hashlib
@@ -147,25 +150,51 @@ async def load_state():
     except Exception as e:
         logger.warning(f"Could not load state: {e}")
 
-async def save_state():
+async def save_state(*, strict: bool = False) -> bool:
+    """Atomically persist panel state.
+
+    Dashboard/background callers retain the historical best-effort behaviour.
+    Transactional integrations (notably API v1) pass ``strict=True`` so a disk
+    failure is surfaced and their in-memory/core mutation can be rolled back.
+    """
     async with SAVE_LOCK:
+        tmp = DATA_FILE.with_suffix(".tmp")
         try:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
+            # Copy nested records while holding their owning locks.  Relays can
+            # update traffic counters while a save is running; serializing the
+            # live dictionaries directly risks a torn snapshot.
+            async with LINKS_LOCK:
+                links_snapshot = copy.deepcopy(LINKS)
+            async with SUBS_LOCK:
+                subs_snapshot = copy.deepcopy(SUBS)
+            async with NODE_KEYS_LOCK:
+                node_keys_snapshot = copy.deepcopy(NODE_KEYS)
+            async with NODES_LOCK:
+                nodes_snapshot = copy.deepcopy(NODES)
             data = {
-                "links": dict(LINKS),
-                "subs": dict(SUBS),
-                "node_keys": dict(NODE_KEYS),
-                "nodes": dict(NODES),
+                "links": links_snapshot,
+                "subs": subs_snapshot,
+                "node_keys": node_keys_snapshot,
+                "nodes": nodes_snapshot,
                 "password_hash": AUTH["password_hash"],
                 "disable_logging": CONFIG.get("disable_logging", False),
                 "saved_at": datetime.now().isoformat(),
             }
-            tmp = DATA_FILE.with_suffix(".tmp")
             async with aiofiles.open(tmp, "w", encoding="utf-8") as f:
                 await f.write(json.dumps(data, ensure_ascii=False, indent=2))
             tmp.replace(DATA_FILE)
+            return True
         except Exception as e:
             logger.warning(f"Could not save state: {e}")
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
+            if strict:
+                raise
+            return False
 
 
 # ── Debounced save ─────────────────────────────────────────────────────────────
@@ -755,6 +784,8 @@ async def ensure_default_link():
                     "label": "لینک پیش‌فرض",
                     "limit_bytes": 0,
                     "used_bytes": 0,
+                    "upload_bytes": 0,
+                    "download_bytes": 0,
                     "created_at": datetime.now().isoformat(),
                     "active": True,
                     "expires_at": None,
@@ -1381,6 +1412,7 @@ async def api_bot_tcp_proxy_attach(request: Request, _=Depends(require_auth)):
         secret = mtproto.generate_secret()
         link_data = {
             "label": label, "limit_bytes": 0, "used_bytes": 0,
+            "upload_bytes": 0, "download_bytes": 0,
             "created_at": datetime.now().isoformat(),
             "alpn": "h2,http/1.1", "fingerprint": "chrome", "active": True,
             "expires_at": None, "note": "", "is_default": False, "sub_id": None,
@@ -1552,6 +1584,10 @@ async def _create_link_core(body: dict) -> dict:
         "label": label,
         "limit_bytes": limit_bytes,
         "used_bytes": 0,
+        # Directional counters are kept separately for API/analytics while
+        # used_bytes remains the authoritative quota counter.
+        "upload_bytes": 0,
+        "download_bytes": 0,
         "created_at": datetime.now().isoformat(),
         "alpn": alpn_val,
         "fingerprint": fp_val,
@@ -1563,6 +1599,10 @@ async def _create_link_core(body: dict) -> dict:
         "protocol": protocol,
         "ad_tag": None,
     }
+    api_username = str(body.get("username") or "").strip()
+    if api_username:
+        link_data["username"] = api_username[:64]
+        link_data["api_managed"] = True
 
     if protocol == "mtproto":
         raw_port = body.get("mtproto_port")
@@ -1606,7 +1646,11 @@ async def _create_link_core(body: dict) -> dict:
             link_data["mtproto_public_pending"] = False
         elif bottokentcpproxy.has_saved_token():
             link_data["mtproto_public_pending"] = True
-            asyncio.create_task(_attach_mtproto_public_proxy(uid, inst["port"], label))
+            # API v1 can request synchronous provisioning so it never returns
+            # a not-ready Telegram proxy link. Dashboard creation keeps its
+            # historical non-blocking behaviour.
+            if not body.get("_await_mtproto_public_proxy"):
+                asyncio.create_task(_attach_mtproto_public_proxy(uid, inst["port"], label))
         else:
             # بدون توکن Railway هیچ TCP Proxy عمومی ساخته نمی‌شه، یعنی این لینک
             # از بیرون اصلاً قابل دسترس نیست. قبلاً این حالت بی‌صدا رد می‌شد و
@@ -1632,6 +1676,13 @@ async def _create_link_core(body: dict) -> dict:
     
     async with LINKS_LOCK:
         LINKS[uid] = link_data
+
+    if (
+        protocol == "mtproto"
+        and body.get("_await_mtproto_public_proxy")
+        and link_data.get("mtproto_public_pending")
+    ):
+        await _attach_mtproto_public_proxy(uid, int(link_data["mtproto_port"]), label)
 
     if sub_id:
         async with SUBS_LOCK:
@@ -1695,9 +1746,12 @@ async def list_links(_=Depends(require_auth)):
     result.sort(key=lambda x: x["created_at"], reverse=True)
     return {"links": result}
 
-@app.patch("/api/links/{uid}")
-async def update_link(uid: str, request: Request, _=Depends(require_auth)):
-    body = await request.json()
+async def _update_link_core(uid: str, body: dict) -> dict:
+    """Update a link and synchronize process-backed protocols.
+
+    Shared by the session-authenticated dashboard and API-key-authenticated v1
+    router so both paths have identical VPN core lifecycle semantics.
+    """
     mtproto_action = None
     new_sub = "UNCHANGED"
 
@@ -1738,6 +1792,8 @@ async def update_link(uid: str, request: Request, _=Depends(require_auth)):
             link["note"] = str(body["note"])[:200]
         if "reset_usage" in body and body["reset_usage"]:
             link["used_bytes"] = 0
+            link["upload_bytes"] = 0
+            link["download_bytes"] = 0
             log_activity("link", f"مصرف کانفیگ «{label}» ریست شد", "info")
         if "limit_value" in body:
             lv = float(body.get("limit_value") or 0)
@@ -1805,6 +1861,12 @@ async def update_link(uid: str, request: Request, _=Depends(require_auth)):
 
     asyncio.create_task(save_state())
     return {"ok": True}
+
+
+@app.patch("/api/links/{uid}")
+async def update_link(uid: str, request: Request, _=Depends(require_auth)):
+    body = await request.json()
+    return await _update_link_core(uid, body)
     
 # ===== Endpoint جدید برای به‌روزرسانی ad_tag =====
 @app.patch("/api/links/{uid}/ad-tag")
@@ -1840,8 +1902,8 @@ async def get_ad_tag_status(uid: str, _=Depends(require_auth)):
             "ad_tag": link.get("ad_tag"),
         }
 
-@app.delete("/api/links/{uid}")
-async def delete_link(uid: str, _=Depends(require_auth)):
+async def _delete_link_core(uid: str) -> dict:
+    """Delete a link from live state and stop its process-backed core, if any."""
     async with LINKS_LOCK:
         if uid not in LINKS:
             raise HTTPException(status_code=404, detail="link not found")
@@ -1863,6 +1925,11 @@ async def delete_link(uid: str, _=Depends(require_auth)):
     asyncio.create_task(save_state())
     log_activity("link", f"کانفیگ «{label}» حذف شد", "err")
     return {"ok": True, "deleted": uid}
+
+
+@app.delete("/api/links/{uid}")
+async def delete_link(uid: str, _=Depends(require_auth)):
+    return await _delete_link_core(uid)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Node linking — inbound (این پنل صادرکننده‌ی کلید است)
@@ -2753,6 +2820,17 @@ async def dashboard(request: Request):
 @app.get("/test-ws", response_class=HTMLResponse)
 async def test_ws_redirect():
     return HTMLResponse(content="<script>location.href='/dashboard'</script>")
+
+
+# ── Bot administration REST API v1 ──────────────────────────────────────────
+# Registered after the panel/core helpers are defined.  The router itself uses
+# lazy access to this module, avoiding circular imports during startup.
+from api_v1 import install_exception_handlers as install_api_v1_exception_handlers
+from api_v1 import router as api_v1_router
+
+app.include_router(api_v1_router)
+install_api_v1_exception_handlers(app)
+
 
 if __name__ == "__main__":
     uvicorn.run(

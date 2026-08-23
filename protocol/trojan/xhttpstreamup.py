@@ -34,7 +34,7 @@ async def trojan_stream_up_upload(uuid: str, session_id: str, request: Request):
 
     gate = sess.get("gate")
     if gate is None:
-        gate = _TrojanQuotaGate(uuid)
+        gate = _TrojanQuotaGate(uuid, "upload")
         sess["gate"] = gate
 
     flow = sess.get("flow")
