@@ -936,9 +936,10 @@ async def ensure_default_link():
         _default_link_created = True
 
 # ── Basic endpoints ───────────────────────────────────────────────────────────
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 async def root():
-    return {"service": "RVG Gateway", "version": "9.2", "status": "active", "channel": "https://t.me/CodeBoxo"}
+    from pages import HOME_HTML
+    return HOME_HTML.replace("{version}", "9.2")
 
 @app.get("/health")
 async def health():
