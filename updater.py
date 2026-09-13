@@ -1,22 +1,13 @@
-# updater.py — بروزرسانی پنل بر اساس مانیفست JSON که یک Cloudflare Worker
-# تولید می‌کند (به‌جای فایل PHP روی InfinityFree که به‌خاطر anti-bot/محدودیت
-# منابع کنار گذاشته شد). مانیفست شامل نسخه، توضیحات و لیست فایل‌های
-# قابل‌دانلود (هر کدام با URL و sha1) است.
-# + نگهداری تاریخچه‌ی کامل بروزرسانی‌ها (زمان، نسخه، توضیحات) روی دیسک دائمی
-# + کش سراسری برای مانیفست تا صرف‌نظر از تعداد کاربران پنل، فشار درخواست به
-#   سرور Worker ثابت و کم بماند (Cloudflare Workers هم سقف رایگان دارن،
-#   پس این کش هنوز لازمه)
+# updater.py — بروزرسانی خودکار از طریق Cloudflare Worker غیرفعال شده است.
+# هیچ درخواستی به دامنه‌ی workers.dev ارسال نمی‌شود. توابع مربوط به گرفتن
+# مانیفست/انجام آپدیت همیشه خطای «غیرفعال است» برمی‌گردانند تا endpointهای
+# main.py (و در نتیجه‌ی فرانت) بدون تغییر و بدون کرش کار کنند.
 import asyncio, os, time, traceback, re, json, hashlib
 from pathlib import Path
 from collections import deque
 import httpx
 
-# آدرس Worker مانیفست. مقدار پیش‌فرض روی ساب‌دامین workers.dev شماست؛ در صورت
-# نیاز (مثلاً بعد از ست‌کردن دامنه‌ی اختصاصی روی Worker) می‌توانید با متغیر
-# محیطی UPDATE_MANIFEST_URL آن را override کنید.
-UPDATE_MANIFEST_URL = os.environ.get(
-    "UPDATE_MANIFEST_URL", "https://rvg-update.arvin341az.workers.dev/version.json"
-)
+UPDATE_MANIFEST_URL = ""  # عمداً خالی — بروزرسانی ابری غیرفعال است
 
 APP_DIR = Path(os.environ.get("APP_DIR", os.getcwd()))
 LOCAL_VERSION_FILE = APP_DIR / "version.txt"
@@ -121,65 +112,8 @@ def _write_local_version_file(version: str, description: str):
 
 
 async def _fetch_manifest_from_worker() -> dict:
-    """درخواست واقعی (بدون کش) به Cloudflare Worker مانیفست."""
-    if not UPDATE_MANIFEST_URL:
-        return {"error": "UPDATE_MANIFEST_URL تنظیم نشده"}
-    url = f"{UPDATE_MANIFEST_URL}?_={int(time.time())}"
-    headers = {
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma": "no-cache",
-        # روی Worker معمولاً لازم نیست، ولی نگه داشته شده تا اگر جلوی Worker
-        # یک پراکسی/CDN دیگه هم قرار گرفت، رفتار یکسان بمونه.
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-    }
-    try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            r = await client.get(url, headers=headers)
-            if r.status_code == 404:
-                return {"error": "مانیفست version.json پیدا نشد (404) — آدرس UPDATE_MANIFEST_URL یا روت Worker رو چک کنید"}
-            r.raise_for_status()
-
-            raw_text = r.text
-            try:
-                data = json.loads(raw_text)
-            except json.JSONDecodeError as je:
-                # به‌جای پیام مبهم "Expecting value..."، کل محتوای واقعی برگشتی
-                # رو (تا سقف مشخص) لاگ می‌کنیم تا خودتون دقیقاً ببینید Worker
-                # چی برگردونده (خطای اسکریپت؟ صفحه‌ی Cloudflare error؟ خالی؟).
-                ctype = r.headers.get("content-type", "?")
-                full = raw_text.strip()
-                _log(f"⚠️ پاسخ Worker معتبر (JSON) نبود | content-type={ctype} | status={r.status_code} | طول={len(full)} کاراکتر")
-                if not full:
-                    return {"error": "پاسخ Worker کاملاً خالی بود (بررسی کنید route درست تنظیم شده)"}
-                # چون هر خط لاگ جدا نمایش داده می‌شه، متن رو تکه‌تکه (هر تکه ۵۰۰ کاراکتر) چاپ می‌کنیم
-                # تا کل HTML/متن برگشتی رو بدون افتادگی، در باکس لاگ پنل ببینید.
-                CHUNK = 500
-                total_chunks = (len(full) + CHUNK - 1) // CHUNK
-                MAX_CHUNKS = 20  # سقف ~10000 کاراکتر، برای جلوگیری از سنگین شدن لاگ
-                for idx in range(min(total_chunks, MAX_CHUNKS)):
-                    piece = full[idx * CHUNK: (idx + 1) * CHUNK]
-                    _log(f"📄 RAW[{idx+1}/{total_chunks}]: {piece}")
-                if total_chunks > MAX_CHUNKS:
-                    _log(f"📄 RAW: ... ({total_chunks - MAX_CHUNKS} تکه‌ی دیگه بریده شد ...)")
-                if full.lstrip().startswith("<"):
-                    return {"error": "Worker به‌جای JSON یک صفحه‌ی HTML برگردوند (احتمالاً خطای Cloudflare) — متن کامل رو در لاگ بالا ببینید"}
-                return {"error": f"پاسخ Worker قابل‌پارس نبود: {je} — متن کامل رو در لاگ بالا ببینید"}
-
-            if "version" not in data:
-                return {"error": "فرمت مانیفست نامعتبر است (کلید version یافت نشد)"}
-            if "files" not in data or not isinstance(data["files"], list):
-                return {"error": "فرمت مانیفست نامعتبر است (کلید files یافت نشد)"}
-            return {
-                "version": data.get("version", ""),
-                "description": data.get("description", ""),
-                "files": data.get("files", []),
-            }
-    except httpx.HTTPStatusError as e:
-        return {"error": f"HTTP {e.response.status_code} از Worker"}
-    except Exception as e:
-        return {"error": str(e)}
+    """غیرفعال شد — دیگر هیچ درخواستی به Worker ارسال نمی‌شود."""
+    return {"error": "بروزرسانی ابری غیرفعال است"}
 
 
 async def get_latest_version_info() -> dict:
