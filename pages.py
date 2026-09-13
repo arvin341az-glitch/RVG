@@ -3293,16 +3293,9 @@ function navTo(name){
 document.querySelectorAll('.nav-it').forEach(el=>el.addEventListener('click',()=>navTo(el.dataset.pg)));
 function openModal(id){document.getElementById(id).classList.add('open')}
 function closeModal(id){document.getElementById(id).classList.remove('open')}
-let supportDevDismissCount=0;
-const supportDevDismissTexts=['د اخه مگه دست خودته:(','نکن مشتی نداریمااااا'];
 function handleSupportDevDismiss(){
-  supportDevDismissCount++;
-  if(supportDevDismissCount>=3){
-    closeModal('modal-support-dev');
-    localStorage.setItem('rvg-support-dev-seen','true');
-    return;
-  }
-  document.getElementById('support-dev-dismiss-btn').textContent=supportDevDismissTexts[supportDevDismissCount-1];
+  closeModal('modal-support-dev');
+  localStorage.setItem('rvg-support-dev-seen','true');
 }
 let prevTraf=0,ch1,ch3;
 async function fetchStats(){
