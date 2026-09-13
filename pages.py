@@ -1,5 +1,162 @@
 # pages.py  -  RVG Gateway v9.2
-# شامل: LOGIN_HTML, DASHBOARD_HTML, get_public_page_html()
+# شامل: HOME_HTML, LOGIN_HTML, DASHBOARD_HTML, get_public_page_html()
+
+HOME_HTML = r"""<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RVG Gateway · codebox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#0A0E15;--surface:#0E1421;--surface-2:#141C2C;--inset:rgba(255,255,255,.03);
+  --accent:#3E6FD1;--accent-hi:#5A90EE;--accent-soft:rgba(62,111,209,.15);
+  --btn-a:#4A7BE0;--btn-b:#2F53B8;--btn-ring:rgba(74,123,224,.34);
+  --text:#E9EEF7;--mid:#9AA6BE;--dim:#66728D;
+  --border:rgba(255,255,255,.09);--border-hi:rgba(255,255,255,.18);
+  --ok:#3FB27F;--danger:#E0656F;
+}
+[data-theme="light"]{
+  --bg:#EEF1F6;--surface:#FFFFFF;--surface-2:#F5F7FB;--inset:rgba(16,24,39,.022);
+  --accent:#2A55A8;--accent-hi:#1F4691;--accent-soft:rgba(42,85,168,.08);
+  --btn-a:#3565C4;--btn-b:#1E3F8C;--btn-ring:rgba(42,85,168,.26);
+  --text:#101827;--mid:#54607A;--dim:#7C879C;
+  --border:#E1E6EF;--border-hi:#C7CFDE;
+  --ok:#2E8F66;--danger:#C7414D;
+}
+html{-webkit-text-size-adjust:100%}
+body{font-family:'Vazirmatn',system-ui,sans-serif;background:var(--bg);color:var(--text);
+  min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px;position:relative;overflow-x:hidden}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);
+  background-size:52px 52px;
+  -webkit-mask-image:radial-gradient(ellipse 70% 55% at 50% 15%,#000 5%,transparent 75%);
+  mask-image:radial-gradient(ellipse 70% 55% at 50% 15%,#000 5%,transparent 75%)}
+.aura{position:fixed;border-radius:50%;filter:blur(80px);pointer-events:none;z-index:0}
+.aura-1{width:420px;height:420px;top:-140px;right:-100px;background:rgba(62,111,209,.28);animation:drift 18s ease-in-out infinite}
+.aura-2{width:340px;height:340px;bottom:-120px;left:-80px;background:rgba(63,178,127,.14);animation:drift 22s ease-in-out infinite reverse}
+@keyframes drift{0%,100%{transform:translate(0,0)}50%{transform:translate(24px,-20px)}}
+
+.theme-btn{position:fixed;top:20px;left:20px;z-index:5;width:36px;height:36px;border-radius:10px;
+  background:var(--surface);border:1px solid var(--border);color:var(--mid);display:flex;align-items:center;
+  justify-content:center;font-size:16px;cursor:pointer;transition:color .18s,border-color .18s,background .18s}
+.theme-btn:hover{color:var(--text);border-color:var(--border-hi)}
+.theme-btn i{transition:transform .4s cubic-bezier(.34,1.4,.64,1)}
+.theme-btn:hover i{transform:rotate(35deg)}
+
+.card{position:relative;z-index:1;width:100%;max-width:440px;background:var(--surface);
+  border:1px solid var(--border);border-radius:18px;overflow:hidden;
+  box-shadow:0 30px 64px -32px rgba(0,0,0,.75);animation:rise .5s cubic-bezier(.22,.61,.36,1) both}
+[data-theme="light"] .card{box-shadow:0 24px 50px -30px rgba(23,38,71,.35)}
+@keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+
+.card-head{display:flex;align-items:center;gap:12px;padding:20px 24px;border-bottom:1px solid var(--border);background:var(--surface-2)}
+.logo{width:40px;height:40px;border-radius:10px;overflow:hidden;flex-shrink:0;border:1px solid var(--border)}
+.logo img{width:100%;height:100%;object-fit:cover;display:block}
+.brand-name{font-size:14.5px;font-weight:700;letter-spacing:-.01em}
+.brand-sub{font-size:11px;color:var(--dim);margin-top:2px}
+.ver{margin-inline-start:auto;font-size:10.5px;color:var(--mid);border:1px solid var(--border);
+  border-radius:6px;padding:3px 8px;letter-spacing:.04em}
+
+.card-body{padding:26px 24px 24px;text-align:center}
+.eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:10.5px;color:var(--mid);
+  border:1px solid var(--border);border-radius:999px;padding:5px 11px;margin-bottom:18px;letter-spacing:.04em}
+.eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--ok);position:relative;flex-shrink:0}
+.eyebrow .dot::after{content:'';position:absolute;inset:-3px;border-radius:50%;background:var(--ok);
+  opacity:.35;animation:ping 2.4s cubic-bezier(0,0,.2,1) infinite}
+@keyframes ping{0%{transform:scale(.7);opacity:.4}70%,100%{transform:scale(2);opacity:0}}
+
+h1{font-size:22px;font-weight:800;letter-spacing:-.025em;margin-bottom:8px}
+.sub{font-size:12.5px;color:var(--mid);line-height:1.85;margin-bottom:22px;max-width:340px;margin-inline:auto}
+
+.chips{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-bottom:24px}
+.chip{font-size:11px;padding:6px 11px;border-radius:8px;color:var(--mid);
+  background:var(--inset);border:1px solid var(--border);display:flex;align-items:center;gap:6px}
+.chip i{font-size:13px;color:var(--accent-hi)}
+
+.btn{width:100%;padding:13px;border-radius:10px;border:none;cursor:pointer;text-decoration:none;
+  background:linear-gradient(135deg,var(--btn-a),var(--btn-b));
+  color:#fff;font-family:inherit;font-size:14px;font-weight:600;letter-spacing:-.005em;
+  display:flex;align-items:center;justify-content:center;gap:8px;position:relative;overflow:hidden;
+  box-shadow:0 6px 18px -8px var(--btn-ring),0 1px 0 rgba(255,255,255,.16) inset;
+  transition:box-shadow .22s ease,transform .16s ease,filter .22s ease}
+.btn::after{content:'';position:absolute;top:0;bottom:0;width:42%;
+  background:linear-gradient(100deg,transparent,rgba(255,255,255,.22),transparent);
+  transform:translateX(-190%);pointer-events:none}
+.btn:hover{filter:saturate(1.08) brightness(1.07);transform:translateY(-1px);
+  box-shadow:0 12px 26px -10px var(--btn-ring),0 1px 0 rgba(255,255,255,.2) inset}
+.btn:hover::after{animation:sheen .85s cubic-bezier(.3,.7,.4,1)}
+@keyframes sheen{to{transform:translateX(280%)}}
+.btn>*{position:relative;z-index:1}
+.btn:focus-visible,.theme-btn:focus-visible{outline:2px solid var(--accent-hi);outline-offset:2px}
+
+.card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:14px 24px;border-top:1px solid var(--border);background:var(--surface-2);
+  font-size:11.5px;color:var(--dim)}
+.card-foot a{color:var(--mid);text-decoration:none;display:flex;align-items:center;gap:5px;transition:color .16s}
+.card-foot a:hover{color:var(--accent-hi)}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.001s !important;animation-iteration-count:1 !important;transition-duration:.001s !important}
+}
+</style>
+</head>
+<body>
+<div class="aura aura-1"></div><div class="aura aura-2"></div>
+<button class="theme-btn" id="theme-btn" onclick="toggleTheme()" title="تغییر تم" aria-label="تغییر تم">
+  <i class="ti ti-sun" id="theme-icon"></i>
+</button>
+
+<section class="card">
+  <div class="card-head">
+    <div class="logo"><img src="https://yt3.googleusercontent.com/vA6bYj1V386YmibpWRNFJtsRRqwfY_U9wnb7gmW90eRVXyNB7gAfjj1XPs5UX0cdKdQprrI=s160-c-k-c0x00ffffff-no-rj" alt="codebox"></div>
+    <div>
+      <div class="brand-name">codebox</div>
+      <div class="brand-sub">RVG Gateway</div>
+    </div>
+    <span class="ver mono">v{version}</span>
+  </div>
+
+  <div class="card-body">
+    <span class="eyebrow"><span class="dot"></span><span class="mono">GATEWAY ONLINE</span></span>
+    <h1>RVG Gateway در حال اجراست</h1>
+    <p class="sub">سرویس گیت‌وی چندپروتکلی و مدیریت کاربران آماده‌ی سرویس‌دهیه. برای مدیریت لینک‌ها و کاربران وارد پنل شوید.</p>
+
+    <div class="chips">
+      <span class="chip"><i class="ti ti-shield-bolt"></i>VLESS</span>
+      <span class="chip"><i class="ti ti-shield-lock"></i>Trojan</span>
+      <span class="chip"><i class="ti ti-key"></i>Shadowsocks</span>
+      <span class="chip"><i class="ti ti-send"></i>MTProto</span>
+    </div>
+
+    <a class="btn" href="/login"><i class="ti ti-login-2"></i> برو به پنل</a>
+  </div>
+
+  <div class="card-foot">
+    <span>کانال رسمی</span>
+    <a href="https://t.me/CodeBoxo" target="_blank" rel="noopener"><i class="ti ti-brand-telegram"></i>@CodeBoxo</a>
+  </div>
+</section>
+
+<script>
+let isDark = localStorage.getItem('rvg-login-theme') !== 'light';
+function applyTheme(dark){
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  document.getElementById('theme-icon').className = 'ti ' + (dark ? 'ti-sun' : 'ti-moon');
+}
+function toggleTheme(){
+  isDark = !isDark;
+  localStorage.setItem('rvg-login-theme', isDark ? 'dark' : 'light');
+  applyTheme(isDark);
+}
+applyTheme(isDark);
+</script>
+</body></html>"""
 
 LOGIN_HTML = r"""<!DOCTYPE html>
 <html lang="fa" dir="rtl">
