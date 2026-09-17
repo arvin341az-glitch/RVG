@@ -1,11 +1,11 @@
-# pages.py  -  RVG Gateway v9.2
+# pages.py  -  @prisonvpnc v9.2
 # شامل: HOME_HTML, LOGIN_HTML, DASHBOARD_HTML, get_public_page_html()
 
 HOME_HTML = r"""<!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RVG Gateway · codebox</title>
+<title>@prisonvpnc · @prisonvpnc</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
