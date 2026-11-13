@@ -1,31 +1,21 @@
-# نام اپ را با نام واقعی اپ خودت در fly.io عوض کن
-# (یا این خط را نگه دار و موقع دیپلوی از  fly deploy -a <app>  استفاده کن).
-app = "APP_NAME"
-
-[build]
-  dockerfile = "Dockerfile"
+app = "name"
+primary_region = "fra"
 
 [env]
-  PORT = "8000"
-  DATA_DIR = "/data"
-
-# دیتای پنل (کانفیگ‌ها، رمز، secret) روی این volume می‌ماند و با
-# ری‌استارت/دیپلوی پاک نمی‌شود.
-[mounts]
-  source = "rvg_data"
-  destination = "/data"
+DATA_DIR = "/data"
+PORT = "8080"
 
 [http_service]
-  internal_port = 8000
-  force_https = true
-  # ماشین هیچ‌وقت به‌خاطر بیکاری خاموش نشود (اتصال‌های پروکسی قطع نشوند)
-  auto_stop_machines = "off"
-  auto_start_machines = true
-  min_machines_running = 1
+auto_start_machines = true
+auto_stop_machines = false
+force_https = true
+internal_port = 8_080
+min_machines_running = 1
 
-  [[http_service.checks]]
-    method = "GET"
-    path = "/login"
-    interval = "30s"
-    timeout = "5s"
-    grace_period = "30s"
+[[mounts]]
+destination = "/data"
+source = "data"
+
+[[vm]]
+memory = "512mb"
+size = "shared-cpu-1x"
