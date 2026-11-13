@@ -33,6 +33,7 @@ import json
 import os
 import re
 import hashlib
+import hmac
 import secrets
 import sys
 import time
@@ -438,32 +439,56 @@ def hash_password(pw: str) -> str:
     return hashlib.sha256(f"{pw}{CONFIG['secret']}".encode()).hexdigest()
 
 AUTH = {"password_hash": hash_password(os.environ.get("ADMIN_PASSWORD", "123456"))}
-SESSIONS: dict = {}
+# سشن‌ها دیگه توی RAM نگه داشته نمی‌شن. توکن سشن خودش تاریخ انقضا رو داره و
+# با SECRET_KEY + هش رمز پنل امضا می‌شه؛ پس بعد از ری‌استارت/دیپلوی (و روی هر
+# ماشینی که همون secret رو داره) معتبر می‌مونه و کاربر بیرون انداخته نمی‌شه.
+# با عوض‌شدن رمز پنل، همه‌ی توکن‌های قبلی خودبه‌خود باطل می‌شن.
+# فقط توکن‌هایی که صریحاً logout شدن تا زمان انقضاشون اینجا نگه داشته می‌شن.
+REVOKED_SESSIONS: dict = {}
 SESSIONS_LOCK = asyncio.Lock()
 
+def _session_sig(payload: str) -> str:
+    key = f"{CONFIG['secret']}|{AUTH['password_hash']}".encode()
+    return hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
+
 async def create_session() -> str:
-    token = secrets.token_urlsafe(32)
-    async with SESSIONS_LOCK:
-        SESSIONS[token] = time.time() + SESSION_TTL
-    return token
+    payload = f"{int(time.time()) + SESSION_TTL}.{secrets.token_urlsafe(16)}"
+    return f"{payload}.{_session_sig(payload)}"
 
 async def is_valid_session(token: str | None) -> bool:
     if not token:
         return False
+    try:
+        payload, sig = token.rsplit(".", 1)
+        exp = int(payload.split(".", 1)[0])
+    except (ValueError, AttributeError):
+        return False
+    if not hmac.compare_digest(sig, _session_sig(payload)):
+        return False
+    if exp < time.time():
+        return False
     async with SESSIONS_LOCK:
-        exp = SESSIONS.get(token)
-        if exp is None:
-            return False
-        if exp < time.time():
-            SESSIONS.pop(token, None)
-            return False
-        return True
+        return token not in REVOKED_SESSIONS
 
 async def destroy_session(token: str | None):
-    if not token:
+    if not token or not await is_valid_session(token):
         return
+    now = time.time()
     async with SESSIONS_LOCK:
-        SESSIONS.pop(token, None)
+        for t in [t for t, e in REVOKED_SESSIONS.items() if e < now]:
+            REVOKED_SESSIONS.pop(t, None)
+        REVOKED_SESSIONS[token] = int(token.split(".", 1)[0])
+
+def _set_session_cookie(resp, token: str):
+    resp.set_cookie(SESSION_COOKIE, token, max_age=SESSION_TTL, httponly=True, samesite="lax", path="/")
+
+def _data_dir_is_persistent() -> bool:
+    """روی Fly.io دیسک ماشین موقتیه؛ فقط وقتی یک Volume روی DATA_DIR مانت شده
+    باشه دیتا بین ری‌استارت‌ها می‌مونه."""
+    try:
+        return os.path.ismount(str(DATA_DIR))
+    except Exception:
+        return False
 
 async def require_auth(request: Request):
     token = request.cookies.get(SESSION_COOKIE)
@@ -491,6 +516,14 @@ async def startup():
     except Exception as exc:
         logger.error(f"راه‌اندازی Telegram Web Proxy ناموفق بود: {exc}")
     log_activity("system", "سرور راه‌اندازی شد", "ok")
+    if os.environ.get("FLY_APP_NAME") and not REDIS_CONNECTED and not _data_dir_is_persistent():
+        msg = (
+            f"هیچ Volume پایداری روی {DATA_DIR} وصل نیست — با هر ری‌استارت/دیپلوی "
+            f"کانفیگ‌ها و رمز پنل پاک می‌شوند. در fly.toml بخش [mounts] را با "
+            f"destination = \"{DATA_DIR}\" اضافه کنید."
+        )
+        log_activity("system", msg, "err")
+        print(f"[STARTUP] ⚠️ {msg}", file=sys.stderr)
     logger.info(f"RVG Gateway v9.2 started on port {CONFIG['port']}")
 
 async def _restart_mtproto_instances():
@@ -1401,7 +1434,7 @@ async def api_login(request: Request):
     token = await create_session()
     log_activity("auth", f"ورود موفق به پنل از {ip}", "ok")
     resp = JSONResponse({"ok": True})
-    resp.set_cookie(SESSION_COOKIE, token, max_age=SESSION_TTL, httponly=True, samesite="lax", path="/")
+    _set_session_cookie(resp, token)
     return resp
 
 @app.post("/api/logout")
@@ -1424,12 +1457,13 @@ async def api_change_password(request: Request, token=Depends(require_auth)):
     if len(new) < 4:
         raise HTTPException(status_code=400, detail="رمز جدید باید حداقل ۴ کاراکتر باشد")
     AUTH["password_hash"] = hash_password(new)
-    async with SESSIONS_LOCK:
-        SESSIONS.clear()
-        SESSIONS[token] = time.time() + SESSION_TTL
     await save_state()
     log_activity("auth", "رمز عبور پنل تغییر کرد", "ok")
-    return {"ok": True}
+    # عوض‌شدن رمز همه‌ی سشن‌های قبلی رو باطل می‌کنه؛ برای همین کاربر فعلی
+    # یک سشن تازه می‌گیره که لاگ‌اوت نشه.
+    resp = JSONResponse({"ok": True})
+    _set_session_cookie(resp, await create_session())
+    return resp
 # ── Backup / Restore ──────────────────────────────────────────────────────────
 @app.get("/api/backup/export")
 async def backup_export(_=Depends(require_auth)):
@@ -1505,14 +1539,10 @@ async def backup_import(request: Request, _=Depends(require_auth)):
                     NODES[nid] = _normalize_node(n)
         _NODE_CACHE.clear()
 
-    if not keep_password and new_pw_hash:
+    password_changed = False
+    if not keep_password and new_pw_hash and new_pw_hash != AUTH["password_hash"]:
         AUTH["password_hash"] = new_pw_hash
-        async with SESSIONS_LOCK:
-            SESSIONS.clear()
-            # سشن فعلی رو نگه می‌داریم که کاربر لاگ‌اوت نشه
-            token = request.cookies.get(SESSION_COOKIE)
-            if token:
-                SESSIONS[token] = time.time() + SESSION_TTL
+        password_changed = True
 
     await save_state()
 
@@ -1522,8 +1552,12 @@ async def backup_import(request: Request, _=Depends(require_auth)):
         logger.error(f"راه‌اندازی مجدد MTProto بعد از ایمپورت ناموفق بود: {exc}")
 
     log_activity("system", "بکاپ با موفقیت روی پنل بازیابی شد", "ok")
-    return {"ok": True, "links_count": len(LINKS), "subs_count": len(SUBS), "nodes_count": len(NODES)}
-    
+    resp = JSONResponse({"ok": True, "links_count": len(LINKS), "subs_count": len(SUBS), "nodes_count": len(NODES)})
+    if password_changed:
+        # سشن فعلی رو با رمز جدید دوباره صادر می‌کنیم که کاربر لاگ‌اوت نشه
+        _set_session_cookie(resp, await create_session())
+    return resp
+
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
 @app.get("/stats")
