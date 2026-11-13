@@ -1,0 +1,7 @@
+__pycache__/
+**/__pycache__/
+*.pyc
+.git
+.gitignore
+fly.toml
+README.md
