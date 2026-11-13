@@ -666,13 +666,41 @@ a{color:inherit;text-decoration:none}
 .nav-it:hover{background:var(--accent-d);color:var(--t2)}
 .nav-it.on{background:var(--accent-d);color:var(--t1);border-right-color:var(--accent);font-weight:600}
 .nav-badge{margin-right:auto;background:rgba(59,130,246,0.15);color:var(--accent2);font-size:9px;padding:1px 6px;border-radius:20px;font-weight:700}
-.sb-foot{padding:12px 14px;border-top:1px solid var(--card-b)}
-.tg-btn{display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#0098e6,#0077bb);color:#fff;border-radius:9px;padding:10px;font-size:12.5px;font-weight:600;font-family:inherit;border:none;cursor:pointer;width:100%;transition:.15s}
-.tg-btn:hover{filter:brightness(1.1)}
-.theme-btn{display:flex;align-items:center;justify-content:center;gap:7px;background:var(--accent-d);color:var(--t2);border-radius:9px;padding:8px;font-size:12px;font-weight:500;font-family:inherit;border:1px solid var(--card-b);cursor:pointer;width:100%;transition:.15s;margin-bottom:7px}
+.sb-foot{padding:12px 14px 14px;border-top:1px solid var(--card-b);display:flex;flex-direction:column;gap:9px}
+.sb-foot-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+/* کارت کانال تلگرام: ارتفاع ثابت است، پس بزرگ‌کردن فونت اندازه‌ی باکس را عوض نمی‌کند */
+.tg-btn{position:relative;overflow:hidden;display:flex;align-items:center;gap:11px;background:linear-gradient(135deg,#0ea5e9,#0369a1);color:#fff;border-radius:12px;padding:0 13px;height:58px;box-sizing:border-box;font-family:inherit;border:none;cursor:pointer;width:100%;transition:.18s;text-decoration:none;box-shadow:0 6px 16px rgba(14,165,233,.28)}
+.tg-btn::after{content:'';position:absolute;inset:0;background:linear-gradient(110deg,transparent 30%,rgba(255,255,255,.14) 50%,transparent 70%);transform:translateX(-100%);transition:transform .6s}
+.tg-btn:hover{filter:brightness(1.07);transform:translateY(-1px)}
+.tg-btn:hover::after{transform:translateX(100%)}
+.tg-ic{width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0}
+.tg-txt{display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:0;flex:1;height:100%;line-height:1}
+.tg-title{font-family:inherit;font-variant-numeric:tabular-nums;font-size:16.5px;font-weight:800;letter-spacing:-.01em;line-height:1;white-space:nowrap}
+.tg-sub{font-size:9.5px;font-weight:500;opacity:.82;line-height:1;white-space:nowrap}
+.theme-btn{display:flex;align-items:center;justify-content:center;gap:6px;background:var(--accent-d);color:var(--t2);border-radius:10px;height:36px;padding:0 8px;font-size:11.5px;font-weight:600;font-family:inherit;border:1px solid var(--card-b);cursor:pointer;width:100%;transition:.15s;white-space:nowrap}
 .theme-btn:hover{background:var(--card-b);color:var(--t1)}
-.logout-btn{display:flex;align-items:center;justify-content:center;gap:7px;background:var(--red-bg);color:var(--red-t);border-radius:9px;padding:8px;font-size:12px;font-weight:500;font-family:inherit;border:1px solid rgba(239,68,68,0.2);cursor:pointer;width:100%;transition:.15s;margin-top:6px}
+.logout-btn{display:flex;align-items:center;justify-content:center;gap:6px;background:var(--red-bg);color:var(--red-t);border-radius:10px;height:36px;padding:0 8px;font-size:11.5px;font-weight:600;font-family:inherit;border:1px solid rgba(239,68,68,0.2);cursor:pointer;width:100%;transition:.15s;white-space:nowrap}
 .logout-btn:hover{background:rgba(239,68,68,0.2)}
+
+/* ── کارت Telegram Web Proxy: سایه‌ی زرد رعدوبرقی + خط نازک زرد متحرک ── */
+@property --wp-a{syntax:'<angle>';inherits:false;initial-value:0deg}
+.cfg-card.is-web{border-color:rgba(250,204,21,.38);animation:wpGlow 2.6s ease-in-out infinite}
+.cfg-card.is-web::before{content:'';position:absolute;inset:0;border-radius:inherit;padding:1px;pointer-events:none;z-index:2;
+  background:conic-gradient(from var(--wp-a),transparent 0%,transparent 62%,rgba(253,224,71,.15) 74%,#fde047 90%,#fff7b0 96%,transparent 100%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;
+  mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0);
+  animation:wpSpin 3.4s linear infinite}
+.cfg-card.is-web::after{content:'';position:absolute;inset:0;pointer-events:none;z-index:0;opacity:0;
+  background:radial-gradient(ellipse at 20% 0%,rgba(253,224,71,.22),transparent 60%),radial-gradient(ellipse at 85% 100%,rgba(250,204,21,.16),transparent 55%);
+  animation:wpFlash 5.2s infinite}
+.cfg-card.is-web .cfg-row{position:relative;z-index:1}
+.wp-bolt{color:#facc15;font-size:13px;filter:drop-shadow(0 0 4px rgba(250,204,21,.9));animation:wpBolt 2.6s infinite}
+@keyframes wpSpin{to{--wp-a:360deg}}
+@keyframes wpGlow{0%,100%{box-shadow:0 0 10px rgba(250,204,21,.14),0 4px 18px rgba(250,204,21,.10)}50%{box-shadow:0 0 22px rgba(250,204,21,.30),0 6px 26px rgba(250,204,21,.20)}}
+@keyframes wpFlash{0%,86%,100%{opacity:0}88%{opacity:1}90%{opacity:.15}92%{opacity:.9}95%{opacity:0}}
+@keyframes wpBolt{0%,86%,100%{opacity:.85;transform:scale(1)}88%{opacity:1;transform:scale(1.25)}90%{opacity:.4}92%{opacity:1;transform:scale(1.2)}}
+.cfg-card.is-web.selected{border-color:rgba(250,204,21,.6)}
+.wp-ip-chip{font-size:9.5px;color:#facc15;background:rgba(250,204,21,.1);border:1px solid rgba(250,204,21,.28);padding:2px 8px;border-radius:20px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;font-variant-numeric:tabular-nums}
 .mob-top{display:none;position:fixed;top:0;right:0;left:0;height:52px;background:var(--bg2);border-bottom:1px solid var(--card-b);z-index:150;align-items:center;justify-content:space-between;padding:0 14px;transition:background .3s}
 .mob-top .ml{display:flex;align-items:center;gap:9px}
 .mob-logo{width:28px;height:28px;border-radius:7px;overflow:hidden}
@@ -1828,6 +1856,12 @@ a{color:inherit;text-decoration:none}
               <div class="cm-opt-text"><div class="cm-opt-title">Telegram Proxy</div><div class="cm-opt-desc">پروکسی MTProto مستقیم روی یک پورت TCP اختصاصی</div></div>
               <span class="cm-opt-tag" style="background:var(--purple-bg);color:var(--purple-t)">MTProto</span>
             </div>
+            <div class="cm-opt" data-base="webproxy" onclick="cmSelectBase('webproxy',this)">
+              <div class="cm-opt-radio"></div>
+              <div class="cm-opt-icon"><i class="ti ti-world-www"></i></div>
+              <div class="cm-opt-text"><div class="cm-opt-title">Telegram Web Proxy</div><div class="cm-opt-desc">پروکسی WEB تلگرام روی همین دامنه‌ی پنل، بدون TCP Proxy</div></div>
+              <span class="cm-opt-tag" style="background:var(--purple-bg);color:var(--purple-t)">جدید</span>
+            </div>
           </div></div></div>
         </div>
       </div>
@@ -1920,6 +1954,30 @@ a{color:inherit;text-decoration:none}
         <div class="cm-note" style="margin-top:10px">
           <i class="ti ti-info-circle"></i>
           <span>پسورد به‌صورت خودکار و امن ساخته می‌شود؛ لینک <b>ss://</b> بعد از ساخت کانفیگ در دسترس است.</span>
+        </div>
+      </div>
+
+      <div class="cm-section" id="webproxy-field" style="display:none;margin-bottom:0">
+        <div class="cm-section-label"><i class="ti ti-users"></i> سقف IP همزمان</div>
+        <div class="cm-field">
+          <input class="cm-input" id="nl-web-maxip" type="number" min="0" max="1000" step="1" placeholder="0 = نامحدود">
+          <div class="cm-pills">
+            <span class="cm-pill active" onclick="cmMaxIp(0,this)">نامحدود</span>
+            <span class="cm-pill" onclick="cmMaxIp(1,this)">۱</span>
+            <span class="cm-pill" onclick="cmMaxIp(2,this)">۲</span>
+            <span class="cm-pill" onclick="cmMaxIp(3,this)">۳</span>
+            <span class="cm-pill" onclick="cmMaxIp(5,this)">۵</span>
+            <span class="cm-pill" onclick="cmMaxIp(10,this)">۱۰</span>
+          </div>
+          <div style="font-size:11px;opacity:.7;margin-top:6px">بیش از این تعداد IP هم‌زمان اجازه‌ی اتصال نمی‌گیرد. بعداً هم از کارت قابل تغییر است.</div>
+        </div>
+        <div class="cm-section-label" style="margin-top:14px"><i class="ti ti-speakerphone"></i> تبلیغ کانال (اختیاری)</div>
+        <div class="cm-field">
+          <input class="cm-input" id="nl-web-adtag" type="text" maxlength="32" dir="ltr" placeholder="ad_tag ۳۲ کاراکتری از @MTProxybot — خالی = بدون تبلیغ">
+        </div>
+        <div class="cm-note" style="margin-top:10px">
+          <i class="ti ti-info-circle"></i>
+          <span>این پروکسی روی همان دامنه‌ی پنل (پورت ۴۴۳) کار می‌کند و نیازی به TCP Proxy ندارد. فقط در نسخه‌های جدید تلگرام که پروکسی نوع WEB را پشتیبانی می‌کنند وصل می‌شود. حجم، انقضا و غیرفعال‌سازی از همین پنل اعمال می‌شود. تبلیغ را بعداً هم از دکمه‌ی بلندگو روی کارت می‌توانید تنظیم کنید.</span>
         </div>
       </div>
 
@@ -2805,9 +2863,14 @@ a{color:inherit;text-decoration:none}
     <div class="nav-it" data-pg="settings"><i class="ti ti-settings"></i> تنظیمات</div>
   </div>
   <div class="sb-foot">
-    <button class="theme-btn" onclick="toggleTheme()"><i class="ti ti-moon" id="theme-icon"></i> <span id="theme-label">تم روشن</span></button>
-    <a class="tg-btn" href="https://t.me/CodeBoxo" target="_blank" rel="noopener"><i class="ti ti-brand-telegram"></i> @CodeBoxo</a>
-    <button class="logout-btn" id="logout-btn"><i class="ti ti-logout"></i> خروج</button>
+    <a class="tg-btn" href="https://t.me/CodeBoxo" target="_blank" rel="noopener">
+      <span class="tg-ic"><i class="ti ti-brand-telegram"></i></span>
+      <span class="tg-txt"><span class="tg-title">به ما بپیوندید</span><span class="tg-sub">پروژه‌های بیشتر ...</span></span>
+    </a>
+    <div class="sb-foot-row">
+      <button class="theme-btn" onclick="toggleTheme()"><i class="ti ti-moon" id="theme-icon"></i> <span id="theme-label">تم روشن</span></button>
+      <button class="logout-btn" id="logout-btn"><i class="ti ti-logout"></i> خروج</button>
+    </div>
   </div>
 </aside>
 <main class="main">
@@ -2947,12 +3010,6 @@ a{color:inherit;text-decoration:none}
       </button>
       <button class="btn btn-g" onclick="bulkCreateGroup('messenger')" id="bulk-messenger-btn">
         <i class="ti ti-brand-telegram"></i> <span>۱۰ کانفیگ پیام‌رسان‌ها</span>
-      </button>
-      <button class="btn btn-g" onclick="openModal('modal-bot-tcp-proxy');btpCheckTokenState()">
-        <i class="ti ti-server-2"></i> <span>Bot tcp proxy</span>
-      </button>
-      <button class="btn btn-g" id="zeus-nav-btn" onclick="openModal('modal-zeus-proxy');zpCheckTokenState()">
-        <i class="ti ti-bolt"></i> <span>Zeus proxy</span>
       </button>
     </div>
     <div class="tb-right">
@@ -3407,6 +3464,7 @@ function protoBadge(p){
     'trojan-xhttp-packet-up':['Trojan · XHTTP packet-up','pc-trojan'],
     'trojan-xhttp-stream-up':['Trojan · XHTTP stream-up','pc-trojan'],
     'mtproto':['Telegram Proxy · MTProto','pc-trojan'],
+    'tg-webproxy':['Telegram Web Proxy','pc-trojan'],
   };
   const v=m[p]||['ناشناخته','pc-ws'];
   return `<span class="proto-chip ${v[1]}">${v[0]}</span>`;
@@ -3603,11 +3661,10 @@ async function loadActivity(){
 let allSubsList=[],allLinksList=[],onlineNodesList=[];
 async function loadLinks(){
   try{
-    const [lr,sr,nr,zr]=await Promise.all([authF('/api/links'),authF('/api/subs'),authF('/api/nodes/aggregate').catch(()=>null),authF('/api/zeus-proxy/status').catch(()=>null)]);
+    const [lr,sr,nr]=await Promise.all([authF('/api/links'),authF('/api/subs'),authF('/api/nodes/aggregate').catch(()=>null)]);
     const {links: localLinks=[]}=await lr.json();
     const {subs=[]}=await sr.json();
-    try{ zeusStatus = zr ? await zr.json() : null; }catch(e){ zeusStatus = null; }
-    document.getElementById('zeus-nav-btn').style.display = (zeusStatus && zeusStatus.phase==='done') ? 'none' : '';
+    zeusStatus = null;
     let nodeLinks=[];
     onlineNodesList=[];
     if(nr && nr.ok){
@@ -3638,23 +3695,25 @@ async function loadLinks(){
     const liveUuids=new Set(links.map(l=>l.uuid));
     [...selectedLinkUuids].forEach(u=>{if(!liveUuids.has(u))selectedLinkUuids.delete(u)});
     document.getElementById('links-selectall-wrap').style.display=links.length?'flex':'none';
-    const zeusExists = !!(zeusStatus && zeusStatus.phase==='done' && zeusStatus.result);
     const grid=document.getElementById('links-grid'),empty=document.getElementById('links-empty');
-    if(!links.length && !zeusExists){grid.innerHTML='';empty.style.display='block';document.getElementById('lsummary').innerHTML='<div class="empty"><i class="ti ti-link-off"></i><p>کانفیگی وجود ندارد</p></div>';updateBulkBar();return}
+    if(!links.length){grid.innerHTML='';empty.style.display='block';document.getElementById('lsummary').innerHTML='<div class="empty"><i class="ti ti-link-off"></i><p>کانفیگی وجود ندارد</p></div>';updateBulkBar();return}
     empty.style.display='none';
     const subMap=Object.fromEntries(subs.map(s=>[s.sub_id,s.name]));
-    grid.innerHTML=(zeusExists?zeusCardHtml(zeusStatus):'')+links.map(l=>{
+    grid.innerHTML=links.map(l=>{
   const isNode=!!l._nodeId;
   const lim=l.limit_bytes===0?'∞':fmtB(l.limit_bytes);
   const pct=l.limit_bytes===0?0:Math.min(100,l.used_bytes/l.limit_bytes*100);
   const bc=pct>90?'var(--red)':pct>70?'var(--amber)':'var(--accent)';
   const allowed=l.active&&!l.expired;
-  const cardCls=(!l.active?'is-off':(l.expired?'is-exp':''))+(isNode?' is-node':'');
+  const cardCls=(!l.active?'is-off':(l.expired?'is-exp':''))+(isNode?' is-node':'')+(l.protocol==='tg-webproxy'?' is-web':'');
   const isMt = l.protocol === 'mtproto';
-  const adBtn = isMt
+  const isWp = l.protocol === 'tg-webproxy';
+  const adBtn = (isMt || isWp)
     ? `<button class="btn btn-sm btn-pur btn-icon" onclick="openAdTagModal('${l.uuid}','${esc(l.label)}','${esc(l.ad_tag||'')}')" title="تنظیم تبلیغ کانال"><i class="ti ti-speakerphone"></i></button>`
     : '';
-  const idChip = isMt
+  const idChip = isWp
+    ? `<span class="cfg-uuid-mini" onclick="navigator.clipboard.writeText('${esc(l.tg_secret||'')}').then(()=>toast('سکرت کپی شد ✓','ok'))" title="Telegram Web Proxy"><i class="ti ti-world-www"></i> ${esc((l.tg_secret||'').slice(0,10))}…</span>`
+    : isMt
     ? `<span class="cfg-uuid-mini" onclick="navigator.clipboard.writeText('${esc(l.mtproto_secret||'')}').then(()=>toast('سکرت کپی شد ✓','ok'))" title="سکرت کامل: ${esc(l.mtproto_secret||'')}"><i class="ti ti-key"></i> ${esc((l.mtproto_secret||'').slice(0,10))}…</span>`
     : `<span class="cfg-uuid-mini" onclick="navigator.clipboard.writeText('${l.uuid}').then(()=>toast('UUID کپی شد','ok'))" title="${l.uuid}"><i class="ti ti-fingerprint"></i> ${l.uuid.slice(0,10)}…</span>`;
   const nodeBadge = isNode ? `<span class="node-origin" style="margin-left:6px"><i class="ti ti-topology-star-3"></i> نود: ${esc(l._nodeName)}</span>` : '';
@@ -3663,7 +3722,7 @@ async function loadLinks(){
       ${isNode?'<span style="width:18px;flex-shrink:0"></span>':`<div class="cfg-check ${selectedLinkUuids.has(l.uuid)?'checked':''}" onclick="toggleLinkSelect('${l.uuid}',this)"><i class="ti ti-check"></i></div>`}
       <span class="cfg-status-dot ${allowed?'pulse':''}"></span>
       <div class="cfg-identity">
-        <div class="cfg-label">${esc(l.label)} ${nodeBadge}</div>
+        <div class="cfg-label">${isWp?'<i class="ti ti-bolt wp-bolt"></i>':''}${esc(l.label)} ${nodeBadge}</div>
         <div class="cfg-sub-meta">
           ${idChip}
           <span>${new Date(l.created_at).toLocaleDateString('fa-IR')}</span>
@@ -3679,7 +3738,8 @@ async function loadLinks(){
       <div class="cfg-divider-v"></div>
       <div class="cfg-badges-col">
         ${protoBadge(l.protocol)}
-        ${isMt && l.ad_tag ? `<span class="cfg-sub-tag" style="background:linear-gradient(135deg,rgba(139,92,246,.18),rgba(109,72,214,.12));color:#A78BFA;padding:3px 9px;border-radius:20px;border:1px solid rgba(139,92,246,.25);font-weight:700"><i class="ti ti-speakerphone" style="color:#A78BFA"></i> تبلیغ فعال</span>` : ''}
+        ${isWp ? `<span class="wp-ip-chip" onclick="editWebMaxIps('${l.uuid}',${l.max_ips||0})" title="${esc((l.active_ips||[]).join(' , ')||'بدون اتصال')} — کلیک برای تغییر سقف"><i class="ti ti-users"></i> ${toFa(l.active_ip_count||0)} / ${l.max_ips?toFa(l.max_ips):'∞'} IP</span>` : ''}
+        ${(isMt || isWp) && l.ad_tag ? `<span class="cfg-sub-tag" style="background:linear-gradient(135deg,rgba(139,92,246,.18),rgba(109,72,214,.12));color:#A78BFA;padding:3px 9px;border-radius:20px;border:1px solid rgba(139,92,246,.25);font-weight:700"><i class="ti ti-speakerphone" style="color:#A78BFA"></i> تبلیغ فعال</span>` : ''}
         ${isMt && l.mtproto_public_host ? `<span class="cfg-sub-tag"><i class="ti ti-route"></i> ${esc(l.mtproto_public_host)}:${l.mtproto_public_port}</span>` : ''}
         ${isMt && !l.mtproto_public_host && l.mtproto_public_pending ? `<span class="cfg-sub-tag" style="color:var(--amber-t)"><i class="ti ti-loader-2" style="animation:spin 1s linear infinite"></i> در حال ساخت TCP Proxy عمومی...</span>` : ''}
         ${isMt && !l.mtproto_public_host && !l.mtproto_public_pending && !l.mtproto_manual_port ? `<span class="cfg-sub-tag" style="color:var(--red-t)"><i class="ti ti-alert-triangle"></i> بدون TCP Proxy عمومی — لینک کار نمی‌کند</span>` : ''}
@@ -3783,6 +3843,7 @@ const BASE_INFO = {
   trojan:   { icon:'ti-shield-lock',    title:'Trojan',         desc:'شبیه‌سازی ترافیک HTTPS معمولی' },
   shadowsocks: { icon:'ti-shield-lock-filled', title:'Shadowsocks', desc:'رمزنگاری AEAD مستقیم، بدون نیاز به TLS خارجی' },
   telproxy: { icon:'ti-brand-telegram', title:'Telegram Proxy', desc:'پروکسی MTProto مستقیم روی یک پورت TCP اختصاصی' },
+  webproxy: { icon:'ti-world-www', title:'Telegram Web Proxy', desc:'پروکسی WEB تلگرام روی همین دامنه‌ی پنل، بدون TCP Proxy' },
 };
 const TRANSPORT_INFO = {
   'ws':               { icon:'ti-link',    title:'WebSocket',            desc:'پایدار و سازگار با همه شرایط شبکه' },
@@ -3815,8 +3876,20 @@ function cmSelectBase(val, el){
   const mtNote = document.getElementById('mtproto-note');
   const portField = document.getElementById('mtproto-port-field');
   const ssField = document.getElementById('ss-cipher-field');
+  const webField = document.getElementById('webproxy-field');
+  if (webField) webField.style.display = (val === 'webproxy') ? 'block' : 'none';
 
-  if (val === 'telproxy') {
+  if (val === 'webproxy') {
+    streamSection.style.display = 'none';
+    normalNote.style.display = 'none';
+    mtNote.style.display = 'none';
+    portField.style.display = 'none';
+    if (ssField) ssField.style.display = 'none';
+    document.getElementById('cm-head-title').textContent = 'ساخت Telegram Web Proxy';
+    document.getElementById('cm-head-sub').textContent = 'پروکسی WEB تلگرام روی دامنه‌ی پنل، با حجم و تبلیغ';
+    document.getElementById('cm-submit-text').textContent = 'ساخت پروکسی';
+    document.getElementById('cm-head-icon').innerHTML = '<i class="ti ti-world-www"></i>';
+  } else if (val === 'telproxy') {
     streamSection.style.display = 'none';
     normalNote.style.display = 'none';
     mtNote.style.display = 'flex';
@@ -3865,6 +3938,10 @@ function cmSelectTransport(val, el){
   cmApplyProto();
 }
 function cmApplyProto(){
+  if (cmBase === 'webproxy') {
+    document.getElementById('nl-proto').value = 'tg-webproxy';
+    return;
+  }
   if (cmBase === 'telproxy') {
     document.getElementById('nl-proto').value = 'mtproto';
     return;
@@ -3886,6 +3963,22 @@ function cmQuota(val, unit, el){
   document.getElementById('nl-unit').value = unit;
   el.parentElement.querySelectorAll('.cm-pill').forEach(c => c.classList.remove('active'));
   el.classList.add('active');
+}
+function cmMaxIp(n, el){
+  document.getElementById('nl-web-maxip').value = n === 0 ? '' : n;
+  el.parentElement.querySelectorAll('.cm-pill').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+}
+async function editWebMaxIps(uuid, cur){
+  const v = prompt('حداکثر تعداد IP همزمان (۰ = نامحدود):', cur || 0);
+  if(v === null) return;
+  const n = parseInt(v, 10);
+  if(isNaN(n) || n < 0){ toast('عدد نامعتبر','err'); return; }
+  try{
+    const r = await authF('/api/links/'+uuid, {method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({max_ips:n})});
+    if(!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || 'خطا');
+    toast('سقف IP ذخیره شد ✓','ok'); loadLinks();
+  }catch(e){ toast('✗ '+e.message,'err'); }
 }
 function cmExpiry(days, el){
   document.getElementById('nl-exp').value = days === 0 ? '' : days;
@@ -3963,24 +4056,27 @@ async function createLink(){
   const nodeId=targetEl?targetEl.value:'';
   const sub_id=document.getElementById('nl-sub').value||null;
   const protocol=document.getElementById('nl-proto').value||'vless-ws';
+  const isWeb = protocol === 'tg-webproxy';
+  const ad_tag = isWeb ? (document.getElementById('nl-web-adtag').value.trim() || null) : null;
+  const max_ips = isWeb ? (parseInt(document.getElementById('nl-web-maxip').value, 10) || 0) : 0;
   const isMt = protocol === 'mtproto';
   const isSs = protocol.startsWith('shadowsocks');
   const mtproto_port = isMt ? (document.getElementById('nl-mtproto-port').value || null) : null;
   const mtproto_domain = isMt ? (document.getElementById('nl-mtproto-domain').value.trim() || null) : null;
   const mtproto_public_host = isMt ? (document.getElementById('nl-mtproto-public-host').value.trim() || null) : null;
   const mtproto_public_port = isMt ? (document.getElementById('nl-mtproto-public-port').value || null) : null;
-  const alpn = (isMt || isSs) ? null : (document.getElementById('nl-alpn').value || 'h2,http/1.1');
-  const fingerprint = (isMt || isSs) ? null : (document.getElementById('nl-fp').value || 'chrome');
+  const alpn = (isMt || isSs || isWeb) ? null : (document.getElementById('nl-alpn').value || 'h2,http/1.1');
+  const fingerprint = (isMt || isSs || isWeb) ? null : (document.getElementById('nl-fp').value || 'chrome');
   const ss_cipher = isSs ? (document.getElementById('nl-ss-cipher').value || 'chacha20-ietf-poly1305') : null;
   try{
     const url = nodeId ? ('/api/nodes/'+nodeId+'/links') : '/api/links';
-    const r=await authF(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label,limit_value:val||0,limit_unit:unit,expires_days:exp||0,note,sub_id,protocol,mtproto_port,mtproto_domain,mtproto_public_host,mtproto_public_port,alpn,fingerprint,ss_cipher})});
+    const r=await authF(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label,limit_value:val||0,limit_unit:unit,expires_days:exp||0,note,sub_id,protocol,mtproto_port,mtproto_domain,mtproto_public_host,mtproto_public_port,alpn,fingerprint,ss_cipher,ad_tag,max_ips})});
     if(!r.ok){
       const d=await r.json().catch(()=>({}));
       throw new Error(d.detail||'failed');
     }
-    ['nl-label','nl-val','nl-exp','nl-note','nl-mtproto-port','nl-mtproto-domain','nl-mtproto-public-host','nl-mtproto-public-port'].forEach(id=>document.getElementById(id).value='');
-    toast(isMt ? 'پروکسی ساخته شد ✓' : (nodeId?'کانفیگ روی نود ساخته شد ✓':'کانفیگ ساخته شد ✓'),'ok');
+    ['nl-label','nl-val','nl-exp','nl-note','nl-mtproto-port','nl-mtproto-domain','nl-mtproto-public-host','nl-mtproto-public-port','nl-web-adtag','nl-web-maxip'].forEach(id=>document.getElementById(id).value='');
+    toast((isMt||isWeb) ? 'پروکسی ساخته شد ✓' : (nodeId?'کانفیگ روی نود ساخته شد ✓':'کانفیگ ساخته شد ✓'),'ok');
     loadLinks();
   }catch(e){toast('✗ '+(e.message||'خطا (شاید کلید این نود اجازه‌ی ساخت از راه دور ندارد)'),'err')}
 }
@@ -4324,7 +4420,7 @@ function renderLmodalList(){
   const nodeItems=lmodalNodeLinks.map(l=>({key:l.node_id+'::'+l.uuid,label:l.label,protocol:l.protocol,used_bytes:l.used_bytes,active:l.active,expired:l.expired,nodeLabel:l.node_label}));
   const all=[...localItems,...nodeItems];
   if(!all.length){body.innerHTML='<div class="empty" style="padding:30px"><i class="ti ti-link-off"></i><p>هنوز کانفیگی وجود ندارد</p></div>';updateLmodalCount();return}
-  const protoIcon=p=>p==='mtproto'?'ti-brand-telegram':p&&p.startsWith('shadowsocks')?'ti-shield-lock-filled':p&&p.startsWith('trojan')?'ti-shield-lock':p&&p.includes('xhttp')?'ti-bolt':'ti-link';
+  const protoIcon=p=>(p==='mtproto'||p==='tg-webproxy')?'ti-brand-telegram':p&&p.startsWith('shadowsocks')?'ti-shield-lock-filled':p&&p.startsWith('trojan')?'ti-shield-lock':p&&p.includes('xhttp')?'ti-bolt':'ti-link';
   body.innerHTML=all.map(l=>{
     const checked=lmodalInSub.has(l.key);
     const on=l.active&&!l.expired;
@@ -6425,6 +6521,7 @@ function toFa(n){{return String(n).replace(/\\d/g,d=>'۰۱۲۳۴۵۶۷۸۹'[d])}
 function protoChip(p){{
   p = p || 'vless-ws';
   if(p==='mtproto')return '<span class="proto-chip pc-trojan"><i class="ti ti-brand-telegram"></i> Telegram Proxy</span>';
+  if(p==='tg-webproxy')return '<span class="proto-chip pc-trojan"><i class="ti ti-world-www"></i> Telegram Web Proxy</span>';
   if(p.startsWith('shadowsocks')){{
     const isWsVariant = p !== 'shadowsocks';
     return '<span class="proto-chip pc-ss"><i class="ti ti-shield-lock-filled"></i> Shadowsocks'+(isWsVariant?' · '+esc(p.replace('shadowsocks-','')):'')+'</span>';
