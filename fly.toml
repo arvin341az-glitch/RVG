@@ -1,0 +1,21 @@
+app = "rvg-bxvxdw"
+primary_region = "fra"
+
+[env]
+DATA_DIR = "/data"
+PORT = "8080"
+
+[http_service]
+auto_start_machines = true
+auto_stop_machines = false
+force_https = true
+internal_port = 8_080
+min_machines_running = 1
+
+[[mounts]]
+destination = "/data"
+source = "data"
+
+[[vm]]
+memory = "512mb"
+size = "shared-cpu-1x"
