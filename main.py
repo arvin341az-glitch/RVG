@@ -31,6 +31,7 @@ import asyncio
 import contextvars
 import json
 import os
+import re
 import hashlib
 import secrets
 import sys
@@ -51,6 +52,9 @@ import botgeneratedomin
 import bottokentcpproxy
 import zeussocks5
 from protocol.mtproto import mtproto_native as mtproto
+from protocol.mtproto import webproxy as tgweb
+import ipaddress
+from starlette.convertors import Convertor, register_url_convertor
 from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import Response, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -70,6 +74,8 @@ except ImportError:
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("RVG-Gateway")
+# پیش‌فرض: لاگ‌گیری خاموش است (تا وقتی از تنظیمات پنل روشن نشود)
+logging.disable(logging.CRITICAL)
 
 IRAN_TZ = ZoneInfo("Asia/Tehran")
 
@@ -114,22 +120,34 @@ def _host_without_port(raw_host: str) -> str:
     return h
 
 
-@app.middleware("http")
-async def _detect_public_host(request: Request, call_next):
-    # X-Forwarded-Host رو اول چک می‌کنیم چون پشت پروکسی‌هایی مثل Cloudflare یا
-    # هر ری‌ورس‌پروکسی دیگه (مثلاً روی lucity.cloud)، هدر Host ممکنه داخلی
-    # باشه ولی X-Forwarded-Host دامنه‌ی واقعی‌ای هست که کاربر توی مرورگرش می‌بینه.
-    raw_host = (
-        request.headers.get("x-forwarded-host", "").split(",")[0].strip()
-        or request.headers.get("host", "")
-    )
-    host_only = _host_without_port(raw_host)
-    token = _request_host_ctx.set(host_only) if host_only else None
-    try:
-        return await call_next(request)
-    finally:
-        if token is not None:
-            _request_host_ctx.reset(token)
+class _DetectPublicHost:
+    """middleware از نوع ASGI خالص (نه BaseHTTPMiddleware)؛ BaseHTTPMiddleware روی هر
+    تکه‌ی پاسخ‌های استریمی سربار می‌ذاره و پروکسی تلگرام رو کند می‌کرد.
+    X-Forwarded-Host رو اول چک می‌کنیم چون پشت پروکسی‌هایی مثل Cloudflare، هدر Host
+    ممکنه داخلی باشه ولی X-Forwarded-Host دامنه‌ی واقعی‌ایه که کاربر می‌بینه."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            return await self.app(scope, receive, send)
+        xfh = host = ""
+        for k, v in scope.get("headers") or ():
+            if k == b"x-forwarded-host" and not xfh:
+                xfh = v.decode("latin-1").split(",")[0].strip()
+            elif k == b"host" and not host:
+                host = v.decode("latin-1")
+        host_only = _host_without_port(xfh or host)
+        token = _request_host_ctx.set(host_only) if host_only else None
+        try:
+            return await self.app(scope, receive, send)
+        finally:
+            if token is not None:
+                _request_host_ctx.reset(token)
+
+
+app.add_middleware(_DetectPublicHost)
 
 # ── Persistence ───────────────────────────────────────────────────────────────
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
@@ -232,7 +250,7 @@ CONFIG = {
         or os.environ.get("PUBLIC_DOMAIN")
         or "localhost"
     ),
-    "disable_logging": False,
+    "disable_logging": True,
 }
 
 
@@ -286,7 +304,7 @@ async def load_state():
                 NODES[nid] = _normalize_node(n)
             if "password_hash" in data:
                 AUTH["password_hash"] = data["password_hash"]
-            CONFIG["disable_logging"] = bool(data.get("disable_logging", False))
+            CONFIG["disable_logging"] = bool(data.get("disable_logging", True))
             apply_logging_state()
             logger.info(
                 f"State loaded from {loaded_from}: {len(LINKS)} links, {len(SUBS)} subs, "
@@ -399,7 +417,7 @@ NODE_SHARE_PARTS = ("usage", "links", "subs", "requests", "logs")
 PROTOCOLS = (
     "vless-ws", "xhttp-packet-up", "xhttp-stream-up",
     "trojan-ws", "trojan-xhttp-packet-up", "trojan-xhttp-stream-up",
-    "mtproto", "shadowsocks",
+    "mtproto", "shadowsocks", "tg-webproxy",
 )
 DEFAULT_PROTOCOL = "vless-ws"
 
@@ -468,6 +486,10 @@ async def startup():
         asyncio.create_task(redis_watchdog())
     await load_state()
     await _restart_mtproto_instances()
+    try:
+        await _sync_webproxy()
+    except Exception as exc:
+        logger.error(f"راه‌اندازی Telegram Web Proxy ناموفق بود: {exc}")
     log_activity("system", "سرور راه‌اندازی شد", "ok")
     logger.info(f"RVG Gateway v9.2 started on port {CONFIG['port']}")
 
@@ -532,6 +554,139 @@ async def _mtproto_usage_callback(uuid: str, n_bytes: int) -> bool:
     return True
 
 mtproto.set_usage_callback(_mtproto_usage_callback)
+
+
+# ── Telegram Web Proxy (tg://webproxy) ───────────────────────────────────────
+# هر کانفیگ = یک user در telemt + مسیر اختصاصی /tgw/<token>/ روی دامنه‌ی خود پنل.
+_WEB_EXTRA_HOSTS: set = set()
+_last_web_save = 0.0
+
+
+def _web_hosts() -> list:
+    hosts = []
+    for h in (
+        os.environ.get("RENDER_EXTERNAL_HOSTNAME"),
+        os.environ.get("RAILWAY_PUBLIC_DOMAIN"),
+        os.environ.get("PUBLIC_DOMAIN"),
+    ):
+        if h:
+            hosts.append(h)
+    for d in LINKS.values():
+        if d.get("protocol") == "tg-webproxy" and d.get("tg_host"):
+            hosts.append(d["tg_host"])
+    hosts.extend(sorted(_WEB_EXTRA_HOSTS))
+    return list(dict.fromkeys(hosts))
+
+
+async def _sync_webproxy():
+    """به‌ازای هر کانفیگ tg-webproxy یک پروسه‌ی telemt (حالت WEB) بالا میاره/به‌روز می‌کنه."""
+    async with LINKS_LOCK:
+        web = [dict(d) for d in LINKS.values()
+               if d.get("protocol") == "tg-webproxy" and d.get("tg_secret") and d.get("tg_token")]
+    items = {d["tg_token"]: {"secret": d["tg_secret"], "ad_tag": d.get("ad_tag") or None} for d in web}
+    await tgweb.sync(items, _web_hosts())
+
+
+# IP های متصل به هر Telegram Web Proxy (فقط در حافظه). کلاینت WEB هر ≤۲۵ ثانیه
+# درخواست long-poll می‌زنه؛ IP ای که ۴۵ ثانیه ساکت بمونه «قطع‌شده» حساب میشه.
+_WEB_IPS: dict = {}
+WEB_IP_TTL = 45.0
+
+
+def _web_active_ips(uid: str) -> dict:
+    ips = _WEB_IPS.setdefault(uid, {})
+    cutoff = time.time() - WEB_IP_TTL
+    for ip in [i for i, e in ips.items() if e["last"] < cutoff]:
+        del ips[ip]
+    return ips
+
+
+def _web_link_urls(uid: str, link: dict, host: str) -> dict:
+    return tgweb.build_links(host, link.get("tg_token", ""), link.get("tg_secret", ""))
+
+
+class _Hex12Convertor(Convertor):
+    regex = "[0-9a-f]{12}"
+
+    def convert(self, value: str) -> str:
+        return value
+
+    def to_string(self, value: str) -> str:
+        return value
+
+
+register_url_convertor("hex12", _Hex12Convertor())
+
+
+def _web_admit(token: str, conn):
+    """بررسی مجاز بودن اتصال (غیرفعال/منقضی/حجم/سقف IP). conn می‌تواند Request یا WebSocket باشد.
+    خروجی: (link, host, ip, on_bytes, touch) یا None."""
+    global _last_web_save
+    link = next((d for d in LINKS.values()
+                 if d.get("protocol") == "tg-webproxy" and d.get("tg_token") == token), None)
+    # غیرفعال/منقضی/اتمام حجم → طوری جواب می‌دیم که انگار چیزی اینجا نیست
+    if link is None or not is_link_allowed(link):
+        return None
+    host = _host_without_port(
+        conn.headers.get("x-forwarded-host", "").split(",")[0].strip()
+        or conn.headers.get("host", "")
+    )
+    known = _web_hosts()
+    if host and host not in known:
+        _WEB_EXTRA_HOSTS.add(host)
+        asyncio.create_task(_sync_webproxy())
+    ip = client_ip(conn)
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        ip = conn.client.host if conn.client else "0.0.0.0"
+
+    # ── سقف IP همزمان: IP جدید وقتی سقف پر باشه ردّ میشه ──
+    uid = next((u for u, d in LINKS.items() if d is link), None)
+    ips = _web_active_ips(uid) if uid else {}
+    max_ips = int(link.get("max_ips") or 0)
+    entry = ips.get(ip)
+    if entry is None:
+        if max_ips > 0 and len(ips) >= max_ips:
+            return None
+        entry = ips[ip] = {"first": time.time(), "last": time.time(), "bytes": 0}
+    entry["last"] = time.time()
+
+    def on_bytes(n: int):
+        link["used_bytes"] = link.get("used_bytes", 0) + n
+        entry["bytes"] += n
+        entry["last"] = time.time()
+        stats["total_bytes"] += n
+        hourly_traffic[now_ir().strftime("%H:00")] += n
+
+    def touch():
+        entry["last"] = time.time()
+
+    now = time.time()
+    if now - _last_web_save > 30:
+        _last_web_save = now
+        asyncio.create_task(schedule_save())
+    use_host = host if host in known else (known[0] if known else host)
+    return link, use_host, ip, on_bytes, touch
+
+
+@app.api_route("/{token:hex12}/{rest:path}", methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"])
+async def tg_webproxy_route(token: str, rest: str, request: Request):
+    adm = _web_admit(token, request)
+    if adm is None:
+        return Response(status_code=404)
+    link, host, ip, on_bytes, _touch = adm
+    return await tgweb.forward(request, token, rest, host, ip, on_bytes)
+
+
+@app.websocket("/{token:hex12}/api/v1/ws")
+async def tg_webproxy_ws(websocket: WebSocket, token: str):
+    adm = _web_admit(token, websocket)
+    if adm is None:
+        await websocket.close(code=1008)
+        return
+    link, host, ip, on_bytes, touch = adm
+    await tgweb.ws_proxy(websocket, token, host, ip, on_bytes, touch, lambda: is_link_allowed(link))
 
 
 async def _attach_mtproto_public_proxy(uid: str, application_port: int, label: str):
@@ -640,6 +795,7 @@ async def _update_mtproto_ad_tag(uuid: str, ad_tag: str):
 async def shutdown():
     await save_state()
     await mtproto.stop_all()
+    await tgweb.stop()
     if http_client:
         await http_client.aclose()
 
@@ -686,6 +842,11 @@ def generate_share_link(uuid: str, host: str, remark: str = "RVG", protocol: str
             pub_host, pub_port, secret,
             mtproto.sanitize_domain(link.get("mtproto_domain"))
         )
+
+    if protocol == "tg-webproxy":
+        if not link.get("tg_secret") or not link.get("tg_token"):
+            return ""
+        return tgweb.build_links(host, link["tg_token"], link["tg_secret"])["tme"]
 
     if protocol == "shadowsocks":
         cipher = link.get("ss_cipher", DEFAULT_CIPHER)
@@ -1764,6 +1925,27 @@ async def get_connections(_=Depends(require_auth)):
             if not g["last_connected_at"] or ca > g["last_connected_at"]:
                 g["last_connected_at"] = ca
     for uid, link in snap.items():
+        if link.get("protocol") == "tg-webproxy":
+            label = link.get("label", "نامشخص")
+            for ip, e in _web_active_ips(uid).items():
+                g = grouped.get(ip)
+                if g is None:
+                    g = {
+                        "ip": ip, "sessions": 0, "bytes": 0,
+                        "labels": set(), "transports": set(),
+                        "first_connected_at": None, "last_connected_at": None,
+                    }
+                    grouped[ip] = g
+                g["sessions"] += 1
+                g["bytes"] += e["bytes"]
+                g["labels"].add(label)
+                g["transports"].add("tg-webproxy")
+                first = datetime.fromtimestamp(e["first"]).isoformat()
+                last = datetime.fromtimestamp(e["last"]).isoformat()
+                if not g["first_connected_at"] or first < g["first_connected_at"]:
+                    g["first_connected_at"] = first
+                if not g["last_connected_at"] or last > g["last_connected_at"]:
+                    g["last_connected_at"] = last
         if link.get("protocol") == "mtproto":
             label = link.get("label", "نامشخص")
             for c in mtproto.get_instance_connections(uid):
@@ -1894,6 +2076,30 @@ async def _create_link_core(body: dict) -> dict:
                 "err",
             )
 
+    if protocol == "tg-webproxy":
+        link_data["tg_secret"] = tgweb.generate_secret()
+        link_data["tg_token"] = tgweb.new_token()
+        link_data["tg_host"] = get_host()
+        try:
+            link_data["max_ips"] = max(0, min(1000, int(body.get("max_ips") or 0)))
+        except (TypeError, ValueError):
+            link_data["max_ips"] = 0
+        ad = (body.get("ad_tag") or "").strip()
+        if ad:
+            if not re.fullmatch(r"[0-9a-fA-F]{32}", ad):
+                raise HTTPException(status_code=400, detail="ad_tag باید ۳۲ کاراکتر هگز باشد")
+            link_data["ad_tag"] = ad.lower()
+            link_data["ad_tag_status"] = "done"
+        async with LINKS_LOCK:
+            LINKS[uid] = link_data
+        try:
+            await _sync_webproxy()
+        except Exception as exc:
+            async with LINKS_LOCK:
+                LINKS.pop(uid, None)
+            asyncio.create_task(_sync_webproxy())
+            raise HTTPException(status_code=502, detail=f"راه‌اندازی Telegram Web Proxy ناموفق بود: {exc}")
+
     if protocol == "shadowsocks":
         ss_cipher = body.get("ss_cipher") or DEFAULT_CIPHER
         if ss_cipher not in CIPHERS:
@@ -1954,6 +2160,15 @@ async def list_links(_=Depends(require_auth)):
                         and not d.get("mtproto_public_host"))
                 ),
             }
+        if proto == "tg-webproxy" and d.get("tg_token"):
+            urls = _web_link_urls(uid, d, host)
+            cur_ips = _web_active_ips(uid)
+            extra = {
+                "tg_link": urls["tg"], "tme_link": urls["tme"],
+                "max_ips": int(d.get("max_ips") or 0),
+                "active_ip_count": len(cur_ips),
+                "active_ips": sorted(cur_ips.keys()),
+            }
         result.append({
             "uuid": uid,
             **d,
@@ -2007,6 +2222,12 @@ async def update_link(uid: str, request: Request, _=Depends(require_auth)):
             link["mtproto_public_pending"] = False
         if "note" in body:
             link["note"] = str(body["note"])[:200]
+        if "max_ips" in body and link.get("protocol") == "tg-webproxy":
+            try:
+                link["max_ips"] = max(0, min(1000, int(body["max_ips"] or 0)))
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="تعداد IP نامعتبر است")
+            log_activity("link", f"سقف IP همزمان «{label}» روی {link['max_ips'] or 'نامحدود'} تنظیم شد", "info")
         if "reset_usage" in body and body["reset_usage"]:
             link["used_bytes"] = 0
             log_activity("link", f"مصرف کانفیگ «{label}» ریست شد", "info")
@@ -2089,9 +2310,32 @@ async def update_ad_tag(uid: str, request: Request, _=Depends(require_auth)):
         if uid not in LINKS:
             raise HTTPException(status_code=404, detail="link not found")
         link = LINKS[uid]
-        if link.get("protocol") != "mtproto":
+        if link.get("protocol") == "tg-webproxy":
+            if not re.fullmatch(r"[0-9a-fA-F]{32}", ad_tag):
+                raise HTTPException(status_code=400, detail="ad_tag باید ۳۲ کاراکتر هگز باشد")
+            link["ad_tag"] = ad_tag.lower()
+            link["ad_tag_status"] = "pending"
+            web_ad = True
+        elif link.get("protocol") != "mtproto":
             raise HTTPException(status_code=400, detail="این کانفیگ MTProto نیست")
-        link["ad_tag_status"] = "pending"   # ← جدید
+        else:
+            web_ad = False
+            link["ad_tag_status"] = "pending"   # ← جدید
+
+    if web_ad:
+        try:
+            await _sync_webproxy()
+            async with LINKS_LOCK:
+                if uid in LINKS:
+                    LINKS[uid]["ad_tag_status"] = "done"
+        except Exception as exc:
+            async with LINKS_LOCK:
+                if uid in LINKS:
+                    LINKS[uid]["ad_tag_status"] = "error"
+            raise HTTPException(status_code=502, detail=f"اعمال ad_tag ناموفق بود: {exc}")
+        asyncio.create_task(save_state())
+        log_activity("link", f"تبلیغ کانال برای «{link.get('label','')}» اعمال شد", "ok")
+        return {"ok": True, "message": "ad_tag اعمال شد"}
 
     asyncio.create_task(_update_mtproto_ad_tag(uid, ad_tag))
     log_activity("link", f"درخواست به‌روزرسانی ad_tag برای «{link.get('label','')}» ثبت شد", "info")
@@ -2121,6 +2365,11 @@ async def delete_link(uid: str, _=Depends(require_auth)):
         proto = LINKS[uid].get("protocol")
         proxy_id = LINKS[uid].get("mtproto_proxy_id")
         del LINKS[uid]
+    if proto == "tg-webproxy":
+        try:
+            await _sync_webproxy()
+        except Exception as exc:
+            logger.error(f"به‌روزرسانی Telegram Web Proxy بعد از حذف ناموفق بود: {exc}")
     if proto == "mtproto":
         await mtproto.stop_instance(uid)
         if proxy_id:
@@ -2957,6 +3206,12 @@ async def api_update(_=Depends(require_auth)):
     log_activity("system", "درخواست بروزرسانی پنل ثبت شد", "info")
     return {"ok": True, "started": True}
 
+@app.get("/api/webproxy/status")
+async def webproxy_status(_=Depends(require_auth)):
+    """وضعیت Telegram Web Proxy: تعداد پروسه‌ها و سطح سرعت (۲ = WebSocket-lanes، ۰ = فقط https)."""
+    return tgweb.get_status()
+
+
 # ── Settings: توقف کامل لاگ‌گیری (برای بیشترین throughput ممکن) ─────────────────
 @app.get("/api/settings/logging")
 async def get_logging_setting(_=Depends(require_auth)):
@@ -3031,6 +3286,7 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=CONFIG["port"],
         log_level="info",
+        ws_per_message_deflate=False,   # ترافیک رمزنگاری‌شده فشرده نمی‌شه؛ فقط CPU/تأخیر اضافه می‌کرد
         workers=1,
         loop="auto",         # uvloop رو در صورت نصب بودن استفاده می‌کنه، وگرنه بدون کرش fallback می‌کنه
         http="auto",
