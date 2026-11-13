@@ -249,6 +249,7 @@ CONFIG = {
         os.environ.get("RENDER_EXTERNAL_HOSTNAME")
         or os.environ.get("RAILWAY_PUBLIC_DOMAIN")
         or os.environ.get("PUBLIC_DOMAIN")
+        or (f"{os.environ['FLY_APP_NAME']}.fly.dev" if os.environ.get("FLY_APP_NAME") else "")
         or "localhost"
     ),
     "disable_logging": True,
